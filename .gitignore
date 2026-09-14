@@ -1,0 +1,21 @@
+# Virtualenvs and packaging
+.venv/
+.uv-cache/
+*.egg-info/
+build/
+dist/
+
+# Python
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+
+# Local configuration (may name your cluster account; the example is committed)
+lampter.toml
+
+# A history database pointed at the project directory
+*.db
+
+# macOS
+.DS_Store

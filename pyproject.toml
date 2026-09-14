@@ -1,0 +1,75 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lampter"
+version = "0.1.0"
+# Named for Dionysus Lampter, the torch-bearer, whose festival at Pellene was a
+# torchlit procession (Pausanias 7.27.3). See the README for why the name fits.
+description = "A terminal dashboard for your SLURM jobs on a remote cluster."
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE"]
+keywords = ["slurm", "hpc", "monitoring", "tui", "cluster", "scheduler"]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Environment :: Console",
+    "Intended Audience :: Science/Research",
+    # NOTE: no `License ::` classifier here. `license = "MIT"` above is an SPDX
+    # expression, and setuptools rejects the two together (PEP 639).
+    "Operating System :: MacOS",
+    "Operating System :: POSIX :: Linux",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Topic :: Scientific/Engineering",
+    "Topic :: System :: Monitoring",
+    "Typing :: Typed",
+]
+dependencies = [
+    # Needed for the one-shot `status` table as well as the TUI.
+    "rich>=13.0",
+]
+
+[project.optional-dependencies]
+# Only the interactive dashboard needs Textual; `status` and `doctor` do not, so a
+# headless box can install the package without pulling in a TUI framework.
+tui = ["textual>=0.80,<9"]
+dev = [
+    "pytest>=8.0",
+    "ruff>=0.6",
+]
+
+[project.scripts]
+lampter = "lampter.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/JosiahWayne/lampter"
+Repository = "https://github.com/JosiahWayne/lampter"
+Issues = "https://github.com/JosiahWayne/lampter/issues"
+Changelog = "https://github.com/JosiahWayne/lampter/blob/main/CHANGELOG.md"
+
+[tool.setuptools.packages.find]
+include = ["lampter*"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
+
+[tool.ruff.lint]
+# A focused set: real errors, import hygiene and modernisation. Heavier rule
+# families (pylint, flake8-blind-except) are deliberately not enabled because this
+# codebase makes a few intentional broad-except and naive-datetime choices that are
+# documented where they occur.
+select = ["E", "F", "W", "I", "UP", "B", "RUF"]
+
+[tool.ruff.lint.per-file-ignores]
+# `pytest.importorskip("textual")` has to run before textual is imported, so a test
+# module's imports cannot all sit at the top.
+"tests/*" = ["E402"]

@@ -1,0 +1,62 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip ruff
+      - name: Ruff
+        run: ruff check lampter tests
+
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        # 3.11 is the floor declared in pyproject.toml; the others are what users are
+        # most likely to have. Neither `rich` nor `textual` is pinned tightly, so a new
+        # major release has to surface here rather than in someone's terminal.
+        python-version: ["3.11", "3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+      - run: python -m pip install --upgrade pip
+      - name: Install (both extras, so the TUI is exercised too)
+        run: pip install -e '.[tui,dev]'
+      - name: Test
+        run: pytest -q
+
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip build
+      # Catches packaging metadata that is valid-looking but rejected by setuptools --
+      # e.g. an SPDX `license` expression combined with a `License ::` classifier,
+      # which nothing in the test suite would notice.
+      - name: Build the distributions
+        run: python -m build
+      - name: The console script must actually start
+        run: |
+          pip install dist/*.whl
+          lampter --version
+          lampter --help > /dev/null
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist
+          path: dist/

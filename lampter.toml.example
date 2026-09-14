@@ -1,0 +1,108 @@
+# lampter configuration
+#
+# Copy to one of:
+#   ./lampter.toml                      (per project)
+#   ~/.config/lampter/config.toml       (per user; note the filename differs)
+#
+# Precedence: defaults < this file < LAMPTER_* environment < CLI flags.
+# Run `lampter doctor` to see the effective values and where they came from.
+#
+# Every value below is the built-in default, so copying this file changes nothing --
+# it exists as a starting point and as a reference for what can be tuned. A test
+# asserts that, so the template cannot silently drift from the code.
+
+# ---------------------------------------------------------------- connection
+
+# SSH host or ~/.ssh/config alias.
+host = "torch"
+
+# Remote username. Leave empty to use whatever the SSH connection logs in as, which
+# is usually what you want: ~/.ssh/config already pins `User` for the host.
+user = ""
+
+# ssh binary to invoke. Point this at a wrapper if you need a jump host setup that is
+# not expressed in ~/.ssh/config.
+ssh_binary = "ssh"
+
+# Seconds allowed for the TCP/SSH connection to come up.
+connect_timeout = 15
+
+# Seconds allowed for the whole probe (connect + every collector + return).
+command_timeout = 60
+
+# Fail fast instead of letting ssh prompt for a password (which would freeze the
+# dashboard). Set to false if you authenticate interactively.
+batch_mode = true
+
+# ---------------------------------------------------------------- polling cadence
+#
+# This is the part that decides how much load the monitor puts on the cluster's
+# shared controller, so it is worth understanding before lowering any of it.
+#
+# A refresh is always a single SSH round trip, but it can carry up to four
+# collectors: `squeue` (your jobs), `sinfo` (partition capacity), `sacct` (job
+# outcomes) and `sstat` (live resource use). They are polled on separate clocks
+# because they cost very different amounts and change at very different rates. On
+# Torch, measured remotely:
+#
+#   squeue ~0.10s    sinfo ~0.85s    sacct ~0.19s    sstat ~0.40s
+#
+# The accounts section is the heaviest -- it runs sacctmgr, sshare and a cluster-wide
+# squeue -- but it is also the slowest-moving, so it polls least often. The defaults
+# below cost roughly 2.6 SLURM invocations a minute (~156 an hour):
+#   1.0 squeue + 0.3 sinfo + 0.3 sacct + 0.5 sstat + 0.5 accounts
+# For comparison, polling everything on the job interval would be 5 a minute, and a
+# naive "everything every 15 seconds" would be 20.
+#
+# The trade-off is freshness, and it is worth being explicit about it: at 60 seconds
+# a job that starts will take up to a minute to appear. If you are actively watching
+# a launch, press `r` in the dashboard to refresh immediately, or use `+`/`-` to
+# change the interval for the session without touching this file.
+
+# How often the job list is refreshed.
+refresh_interval = 60
+
+# How often partition capacity (sinfo) is refreshed.
+partition_interval = 200
+
+# How often job outcomes (sacct) are refreshed.
+history_interval = 200
+
+# How often live resource use (sstat) is refreshed. Only running jobs are queried,
+# and the call is skipped entirely when nothing is running.
+usage_interval = 120
+
+# How often accounts, QOS limits and fairshare are refreshed. These move on the scale
+# of hours (quotas and shares change rarely), so this is the slowest clock.
+accounts_interval = 600
+
+# How far back per-account consumption is totalled, in days.
+account_days = 7
+
+# How far back sacct is queried. Larger windows make the payload bigger and the probe
+# slower; 12 hours is enough to catch anything that finished while you were away.
+history_hours = 12
+
+# ---------------------------------------------------------------- local history
+#
+# Every refresh is recorded into a small SQLite database. That is what makes "what
+# changed since I last looked?" answerable at all: squeue forgets a job the moment it
+# leaves the queue, so a job that fails between two refreshes would otherwise vanish
+# silently. Alerts are derived from these records and are deduplicated, so restarting
+# the monitor never repeats a warning.
+
+# Set to false to run with no database at all: no alerts, no history view, and no
+# queue-wait statistics. Live job status keeps working.
+history_enabled = true
+
+# Where the database lives. Leave empty for the default,
+# ~/.local/share/lampter/history.db
+history_path = ""
+
+# Alert once when a pending job has been queued this long (default 6 hours). Six
+# hours is well past normal backfill on Torch.
+pending_alert_sec = 21600
+
+# Alert once when a running job has this little time left (default 15 minutes),
+# because that is how jobs die unexpectedly.
+limit_soon_sec = 900
