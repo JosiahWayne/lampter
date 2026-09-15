@@ -180,8 +180,11 @@ latter are polled less often, so pretending they were just refreshed would be a 
 
 ## Configuration
 
-Copy `lampter.toml.example` to `./lampter.toml` or
-`~/.config/lampter/config.toml`:
+Every value below is already the default, so a config file is optional — it exists to
+change something. The fully annotated template is
+[`lampter.toml.example`](https://github.com/JosiahWayne/lampter/blob/main/lampter.toml.example)
+in the repository (and in the source distribution). Copy it to `./lampter.toml` or
+`~/.config/lampter/config.toml`; the essentials are:
 
 ```toml
 host = "torch"
