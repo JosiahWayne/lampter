@@ -143,10 +143,18 @@ class SlurmMonitorApp(App[None]):
 
         self._fetching = False
         self._next_refresh_at = time.monotonic() + interval
-        self._last_partitions_at = 0.0
-        self._last_history_at = 0.0
-        self._last_usage_at = 0.0
-        self._last_accounts_at = 0.0
+        #: When each slow collector was last fetched, or ``None`` for "never". The
+        #: distinction matters: ``0.0`` looks like a natural "long ago" but these are
+        #: compared against :func:`time.monotonic`, which counts seconds since **boot**.
+        #: On a machine that booted less than ``accounts_interval`` ago -- a container, a
+        #: CI runner, a laptop switched on five minutes ago -- nothing was ever "due", so
+        #: the first refresh asked only for the job list and the capacity, history and
+        #: accounts views opened empty. This was found by CI, whose runners boot seconds
+        #: before the test runs.
+        self._last_partitions_at: float | None = None
+        self._last_history_at: float | None = None
+        self._last_usage_at: float | None = None
+        self._last_accounts_at: float | None = None
         #: Display id of the row under the cursor, so refreshes don't move it.
         self._selected_id: str | None = None
         self._row_ids: list[str] = []
@@ -162,16 +170,22 @@ class SlurmMonitorApp(App[None]):
         have elapsed. This is the whole point of the section mechanism: a 15-second
         refresh stays at one cheap ``squeue`` most of the time, and the expensive
         collectors run on the schedule they actually need.
+
+        A collector that has never run is always due, whatever the clock says.
         """
         moment = time.monotonic() if now is None else now
+
+        def due(last: float | None, interval: float) -> bool:
+            return last is None or moment - last >= interval
+
         sections = ["jobs"]
-        if moment - self._last_partitions_at >= self.partition_interval:
+        if due(self._last_partitions_at, self.partition_interval):
             sections.append("partitions")
-        if moment - self._last_history_at >= self.history_interval:
+        if due(self._last_history_at, self.history_interval):
             sections.append("history")
-        if moment - self._last_usage_at >= self.usage_interval:
+        if due(self._last_usage_at, self.usage_interval):
             sections.append("usage")
-        if moment - self._last_accounts_at >= self.accounts_interval:
+        if due(self._last_accounts_at, self.accounts_interval):
             sections.append("accounts")
         return tuple(sections)
 

@@ -90,6 +90,13 @@ than estimated.
 * `--account-days` and `LAMPTER_ACCOUNT_DAYS` were documented and inert: the transport
   forwarded `--history-hours` but never this, so the probe always used its own seven-day
   default while `doctor` printed the configured value.
+* The first refresh no longer depends on how long your machine has been switched on. The
+  "last fetched" stamps for the slow collectors started at `0.0` and were compared
+  against `time.monotonic()`, which counts seconds since boot, so on a machine that had
+  booted less than ten minutes ago nothing was ever "due": the first refresh asked only
+  for the job list, and the capacity, history and accounts views opened empty. Caught by
+  CI, whose runners boot seconds before the tests run — it had never reproduced on a
+  laptop that had been up for hours.
 
 ### Documentation
 

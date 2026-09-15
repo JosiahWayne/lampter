@@ -383,6 +383,44 @@ def test_first_refresh_asks_for_everything():
     run(scenario())
 
 
+def test_a_never_fetched_section_is_due_whatever_the_clock_says():
+    """Regression: the first refresh was decided by how long the *machine* had been up.
+
+    The "last fetched" stamps started as ``0.0`` and were compared against
+    ``time.monotonic()``, which counts from boot. On a machine that booted less than
+    ``accounts_interval`` ago, every slow collector looked freshly fetched and the first
+    refresh asked only for the job list -- so the capacity, history and accounts views
+    opened empty and stayed that way until the machine's uptime passed each interval.
+
+    This passed on a laptop and failed on every CI runner, which is the sort of bug that
+    only a fresh machine sees.
+    """
+    app = SlurmMonitorApp(
+        StubTransport(),
+        interval=15,
+        partition_interval=200,
+        history_interval=200,
+        usage_interval=120,
+        accounts_interval=600,
+    )
+
+    # A machine that booted thirty seconds ago, as a container or a CI runner has.
+    assert app.sections_due(30.0) == ("jobs", "partitions", "history", "usage", "accounts")
+    # The same app on a machine that has been up for a week: also everything.
+    assert app.sections_due(604_800.0) == (
+        "jobs",
+        "partitions",
+        "history",
+        "usage",
+        "accounts",
+    )
+
+    # Once a section has actually been fetched, its own clock governs it again.
+    app._last_accounts_at = 30.0
+    assert app.sections_due(31.0) == ("jobs", "partitions", "history", "usage")
+    assert app.sections_due(631.0) == ("jobs", "partitions", "history", "usage", "accounts")
+
+
 def test_jobs_only_refresh_keeps_the_previous_capacity_view():
     """A poll that skips sinfo must not blank the partition data."""
 
