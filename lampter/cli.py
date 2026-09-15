@@ -13,6 +13,13 @@ from . import __version__
 from .config import Config, load_config
 from .demo import DemoTransport
 from .duration import format_epoch, format_time_limit
+from .load import (
+    BUSY_COMMANDS_PER_HOUR,
+    DEFAULT_COMMANDS_PER_HOUR,
+    commands_per_hour,
+    describe_load,
+    intervals_of,
+)
 from .models import (
     SORT_MODES,
     AccountUsage,
@@ -864,6 +871,21 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
     console.print(f"  history interval   {config.history_interval}s (sacct)")
     console.print(f"  usage interval     {config.usage_interval}s (sstat)")
     console.print(f"  accounts interval  {config.accounts_interval}s (sacctmgr/sshare)")
+    # The intervals above are only half the story: what matters to a shared controller is
+    # the total rate they add up to, which is not something a reader can do in their head.
+    intervals = intervals_of(config)
+    rate = commands_per_hour(intervals)
+    if rate > BUSY_COMMANDS_PER_HOUR:
+        console.print(f"  [yellow]cluster load       {describe_load(intervals)}[/yellow]")
+        console.print(
+            f"  [yellow]                   a lot for a shared controller "
+            f"(defaults ~{DEFAULT_COMMANDS_PER_HOUR:.0f}/hour)[/yellow]"
+        )
+    else:
+        console.print(
+            f"  cluster load       {describe_load(intervals)} "
+            f"[dim](defaults ~{DEFAULT_COMMANDS_PER_HOUR:.0f}/hour)[/dim]"
+        )
     console.print(f"  accounting window  {config.account_days}d")
     console.print(f"  history window     {config.history_hours}h")
     if demo:
@@ -890,7 +912,7 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
             if store is not None:
                 store.close()
     for warning in config.warnings:
-        console.print(f"  [yellow]config warning   {warning}[/yellow]")
+        console.print(f"  [yellow]config warning     {warning}[/yellow]")
 
     transport = make_transport(config)
     heading = "loading sample data…" if demo else "running probe…"
@@ -957,6 +979,10 @@ def cmd_tui(args: argparse.Namespace, config: Config) -> int:
         usage_interval=config.usage_interval,
         accounts_interval=config.accounts_interval,
         store=make_store(config),
+        # Carried into the dashboard rather than left to `doctor`: a cadence that is a
+        # lot to ask of a shared controller should be visible on the screen where the
+        # person who set it is looking.
+        config_warnings=config.warnings,
     )
     try:
         app.run()

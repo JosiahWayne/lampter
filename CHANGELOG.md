@@ -35,6 +35,20 @@ than estimated.
 
 ### Features
 
+* **Staying out of everybody's way.** The tool now pushes back on the two ways it could
+  become somebody else's problem. A dropped connection no longer means retrying on
+  schedule forever: the next attempt backs off after each failure (2×, 4×, 8×, capped at
+  five minutes), and after ten consecutive failures auto-refresh stops and says so,
+  because at that point the retries are no longer plausibly going to succeed — each one
+  being a fresh SSH handshake to a shared login node. Pressing `r` retries and resumes
+  (an explicit request to keep watching); a connection that comes back on its own
+  restores auto-refresh only if the pause is what turned it off, so `--no-auto` survives
+  a bad patch of network. And a configuration that asks too often is now reported rather
+  than silently honoured: `doctor` prints the estimated cost of your cadence
+  (`~2.6 SLURM commands/min (~156/hour)`) and warns above ~600 an hour, the dashboard
+  shows the same warning, and the `-` key says so with the figure. Nothing below a
+  2-second interval can complete a round trip anyway, so it only produces failing
+  attempts.
 * **GPU utilisation, against the idle-GPU policy.** The jobs view shows the GPU count and
   the mean utilisation of one GPU, coloured against Torch's published cancellation
   thresholds (`gh*` 60%, `gl*`/`ga*`/`gr*` 50%, otherwise 10%), which are per node family

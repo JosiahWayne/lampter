@@ -39,6 +39,18 @@ batch_mode = true
 # This is the part that decides how much load the monitor puts on the cluster's
 # shared controller, so it is worth understanding before lowering any of it.
 #
+# > Do not turn these down without a reason. They are a budget against a machine
+# > everybody shares, not a freshness dial. The defaults cost ~156 SLURM commands an
+# > hour; `refresh_interval = 2` costs ~1,800, for a view of the queue that a
+# > 60-second poll already answers. Nothing below 2 seconds can even finish a round
+# > trip on a WAN link, so it only produces failing attempts. `lampter doctor` prints
+# > the cost of whatever you configure, and warns above ~600 commands an hour.
+#
+# > And quit the dashboard when you are done. It polls for as long as it is on
+# > screen, and a window left open behind a dropped VPN keeps making failing SSH
+# > handshakes to a shared login node. The dashboard backs off on failure and stops
+# > retrying after ten consecutive ones; it cannot know you walked away.
+#
 # A refresh is always a single SSH round trip, but it can carry up to four
 # collectors: `squeue` (your jobs), `sinfo` (partition capacity), `sacct` (job
 # outcomes) and `sstat` (live resource use). They are polled on separate clocks

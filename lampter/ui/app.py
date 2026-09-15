@@ -26,6 +26,15 @@ from textual.binding import Binding
 from textual.widgets import DataTable, Footer, Header, Static
 
 from ..duration import humanize_seconds
+from ..load import (
+    BUSY_COMMANDS_PER_HOUR,
+    MAX_INTERVAL,
+    MIN_INTERVAL,
+    PAUSE_AFTER_FAILURES,
+    commands_per_hour,
+    intervals_of,
+    retry_delay,
+)
 from ..models import SORT_MODES, Alert, Snapshot
 from ..render import (
     VIEW_KEY_LABELS,
@@ -41,10 +50,10 @@ from ..store import HistoryStore, StoreError
 from ..transport import Transport, TransportError
 from .logview import LogScreen
 
-#: Guards against a refresh interval so short that it becomes a self-inflicted
-#: denial of service against the login node.
-MIN_INTERVAL = 2.0
-MAX_INTERVAL = 600.0
+#: The interactive `+`/`-` clamp comes from :mod:`lampter.load`, so the keyboard and the
+#: config file cannot disagree about what is too fast. Re-exported here because the tests
+#: and the interval actions have always referred to them by this name.
+__all__ = ["MAX_INTERVAL", "MIN_INTERVAL", "SlurmMonitorApp"]
 
 
 class SlurmMonitorApp(App[None]):
@@ -105,6 +114,7 @@ class SlurmMonitorApp(App[None]):
         usage_interval: float = 60.0,
         accounts_interval: float = 600.0,
         store: HistoryStore | None = None,
+        config_warnings: tuple[str, ...] = (),
     ) -> None:
         super().__init__()
         self.transport = transport
@@ -129,6 +139,18 @@ class SlurmMonitorApp(App[None]):
         self.store = store
         #: Newest alerts raised by the store, newest first.
         self.alerts: list[Alert] = []
+        #: Complaints from the config loader, shown rather than swallowed: a cadence
+        #: that is too fast is a real problem for a shared cluster, and this is the
+        #: screen where the person who can fix it is looking.
+        self.config_warnings = config_warnings
+        #: How many refreshes have failed in a row. Drives the backoff below.
+        self.consecutive_failures = 0
+        #: Set when the app stopped retrying by itself after repeated failures.
+        self.paused_by_failures = False
+        #: Whether auto-refresh was *on* when the failure pause turned it off. Recovery
+        #: restores this rather than switching auto-refresh on unconditionally, which
+        #: would override `--no-auto` or a deliberate `a` keypress.
+        self._auto_before_failure_pause = False
 
         self.snapshot: Snapshot | None = None
         #: Which of the three tables is on screen: jobs, partitions or history.
@@ -204,6 +226,11 @@ class SlurmMonitorApp(App[None]):
         self._setup_columns()
         self.query_one(DataTable).focus()
         self.set_interval(1.0, self._tick)
+        for warning in self.config_warnings:
+            # Once, loudly, at startup. The notice line keeps it visible afterwards for
+            # anyone who missed the toast.
+            self.notify(f"config: {warning}", severity="warning", timeout=12)
+        self._warn_if_busy()
         self._trigger_fetch()
 
     def on_resize(self, event) -> None:
@@ -285,6 +312,13 @@ class SlurmMonitorApp(App[None]):
         self._fetching = False
         moment = time.time()
         self.last_error = None
+        self.consecutive_failures = 0
+        if self.paused_by_failures:
+            # The connection came back on its own, which is the usual case for a VPN.
+            # Only restore auto-refresh if the *pause* is what turned it off, so that
+            # `--no-auto` and a deliberate `a` keypress survive a bad patch of network.
+            self._resume_after_failure_pause()
+            self._next_refresh_at = time.monotonic() + self.refresh_interval
 
         for section in sections:
             if section == "partitions":
@@ -325,8 +359,37 @@ class SlurmMonitorApp(App[None]):
     def _on_fetch_error(self, message: str) -> None:
         self._fetching = False
         self.last_error = message
+        self.consecutive_failures += 1
         # Deliberately keep whatever snapshot we already had on screen.
+        #
+        # Slow down. A monitor whose connection has gone away -- a dropped VPN, a
+        # suspended laptop -- must not keep knocking at the configured interval: each
+        # attempt is a fresh SSH handshake to a shared login node, and an unattended
+        # terminal would produce thousands of failing ones overnight. After enough of
+        # them, stop retrying altogether and say so; `r` starts again.
+        now = time.monotonic()
+        if self.consecutive_failures >= PAUSE_AFTER_FAILURES:
+            if not self.paused_by_failures:
+                self._auto_before_failure_pause = self.auto_refresh_enabled
+            self.paused_by_failures = True
+            self.auto_refresh_enabled = False
+        else:
+            delay = retry_delay(self.refresh_interval, self.consecutive_failures)
+            self._next_refresh_at = now + delay
         self._update_summary()
+
+    def _resume_after_failure_pause(self) -> bool:
+        """Clear a failure pause. Returns True if auto-refresh came back on.
+
+        Whether it does is the user's decision, not the network's: the pause only
+        switches auto-refresh off if it was on, and only that gets undone.
+        """
+        self.paused_by_failures = False
+        if self._auto_before_failure_pause:
+            self._auto_before_failure_pause = False
+            self.auto_refresh_enabled = True
+            return True
+        return False
 
     # ---------------------------------------------------------------- painting
 
@@ -429,19 +492,44 @@ class SlurmMonitorApp(App[None]):
             summary.update(line)
 
         parts: list[Text] = []
-        if self.last_error:
+        if self.paused_by_failures:
+            # The most important thing on screen when it happens: the dashboard has
+            # stopped updating by itself, and it will not start again on its own.
+            parts.append(
+                Text(
+                    f"⚠ stopping after {self.consecutive_failures} failed refreshes. "
+                    "If you are done, quit with q; otherwise check the connection and "
+                    "press r to retry.",
+                    style="bold red",
+                )
+            )
+        elif self.last_error:
             parts.append(Text(f"⚠ {self.last_error}", style="bold red"))
+            if self.consecutive_failures > 1:
+                parts.append(
+                    Text(
+                        f"retrying in {humanize_seconds(self._retry_in())} "
+                        f"({self.consecutive_failures} failures in a row)",
+                        style="yellow",
+                    )
+                )
         elif self._fetching:
             parts.append(Text("refreshing…", style="dim"))
         if self.store_error:
             parts.append(Text(f"history db: {self.store_error}", style="yellow"))
         if self.snapshot is not None and self.snapshot.errors:
             parts.append(Text("probe: " + "; ".join(self.snapshot.errors), style="yellow"))
+        for warning in self.config_warnings:
+            parts.append(Text(f"config: {warning}", style="yellow"))
         if self.alerts:
             latest = self.alerts[0]
             style = "bold red" if latest.severity == "error" else "yellow"
             parts.append(Text(f"● {latest.message}", style=style))
         notice.update(Text("\n").join(parts) if parts else Text(""))
+
+    def _retry_in(self) -> float:
+        """Seconds until the next attempt, floored at zero."""
+        return max(0.0, self._next_refresh_at - time.monotonic())
 
     # ---------------------------------------------------------------- actions
 
@@ -449,6 +537,15 @@ class SlurmMonitorApp(App[None]):
         if self._fetching:
             self.notify("already refreshing", severity="warning", timeout=2)
             return
+        # A manual refresh is also the way back from a failure pause, so it clears the
+        # penalty rather than immediately tripping the same limit again. Pressing `r`
+        # is an explicit request to keep watching, so it turns auto-refresh back on even
+        # if the pause had found it off.
+        if self.consecutive_failures or self.paused_by_failures:
+            self.consecutive_failures = 0
+            self._auto_before_failure_pause = True
+            if self._resume_after_failure_pause():
+                self.notify("auto-refresh resumed", timeout=3)
         self._trigger_fetch()
 
     def action_toggle_auto(self) -> None:
@@ -473,6 +570,23 @@ class SlurmMonitorApp(App[None]):
             f"({self.refresh_interval:.0f}s)",
             timeout=2,
         )
+        self._warn_if_busy()
+
+    def _warn_if_busy(self) -> None:
+        """Say so when the current cadence is a lot to ask of a shared controller.
+
+        The `-` key goes down to :data:`MIN_INTERVAL`, which is a defensible floor for
+        "can a round trip finish", not for "is this polite". Nobody else can see this
+        from the outside, so the number is stated in the message.
+        """
+        rate = commands_per_hour(intervals_of(self))
+        if rate > BUSY_COMMANDS_PER_HOUR:
+            self.notify(
+                f"this is about {rate:.0f} SLURM commands an hour; the cluster is "
+                "shared, and the defaults are about 156",
+                severity="warning",
+                timeout=8,
+            )
         self._update_summary()
 
     def action_cycle_sort(self) -> None:

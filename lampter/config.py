@@ -18,6 +18,8 @@ import tomllib
 from dataclasses import dataclass, fields
 from pathlib import Path
 
+from .load import intervals_of, load_warnings
+
 ENV_PREFIX = "LAMPTER_"
 
 CONFIG_FILENAME = "lampter.toml"
@@ -225,6 +227,12 @@ def load_config(
     if not config.host:
         config.host = "torch"
         warnings.append("no host configured; defaulting to 'torch'")
+
+    # A cadence this aggressive is a mistake, and an expensive one: the cluster is
+    # shared, and a short interval does not shorten the round trip, it only multiplies
+    # it. Complaining here rather than silently honouring it is the whole point -- and
+    # `doctor` prints these, so the number that caused it is visible next to the advice.
+    warnings.extend(load_warnings(intervals_of(config)))
 
     config.warnings = tuple(warnings)
     return config

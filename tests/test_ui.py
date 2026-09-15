@@ -19,6 +19,12 @@ pytest.importorskip("textual")
 from fixture_data import FIXTURE_PATH
 from textual.widgets import DataTable, Static
 
+from lampter.load import (
+    BUSY_COMMANDS_PER_HOUR,
+    PAUSE_AFTER_FAILURES,
+    commands_per_hour,
+    intervals_of,
+)
 from lampter.render import COMPACT_LAYOUT, WIDE_LAYOUT, WIDE_LAYOUT_MIN_WIDTH
 from lampter.store import HistoryStore, StoreError
 from lampter.transport import ProbeResult, TransportError
@@ -703,5 +709,201 @@ def test_account_column_is_shown_in_the_jobs_view():
                 for row in range(app.query_one(DataTable).row_count)
             }
             assert accounts <= rendered
+
+    run(scenario())
+
+
+# ------------------------------------------- not hammering a shared cluster
+
+
+def notice_text(app) -> str:
+    """Whatever the notice line is currently saying."""
+    return str(app.query_one("#notice", Static).render())
+
+
+async def wait_for_failure(app, pilot, count: int = 1) -> None:
+    """Let the dashboard reach ``count`` consecutive failed refreshes.
+
+    Scheduled retries are driven through ``_trigger_fetch`` rather than the `r` key on
+    purpose: a *manual* refresh deliberately clears the failure penalty, so using it
+    here would test the opposite of the backoff.
+    """
+    for _ in range(50):
+        if app.consecutive_failures >= count:
+            return
+        app._trigger_fetch()
+        await pilot.pause()
+    raise AssertionError(f"only reached {app.consecutive_failures} failures")
+
+
+def test_a_failed_refresh_backs_off_instead_of_retrying_on_schedule():
+    """An unattended monitor behind a dropped VPN must not keep knocking.
+
+    Each failed attempt is a fresh SSH handshake to a shared login node, so retrying at
+    the configured interval forever is the behaviour that gets an address throttled.
+    """
+
+    async def scenario():
+        transport = StubTransport(error="ssh: connect to host torch port 22: timeout")
+        app = SlurmMonitorApp(transport, interval=60)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, 1)
+            # One failure: still retrying on the normal schedule.
+            assert app.auto_refresh_enabled
+            assert app._next_refresh_at - time.monotonic() <= app.refresh_interval + 1
+
+            await wait_for_failure(app, pilot, 3)
+
+            assert app.consecutive_failures >= 3
+            # The wait is now the backoff, not the interval.
+            assert app._next_refresh_at - time.monotonic() > app.refresh_interval
+            assert "failures in a row" in notice_text(app)
+
+    run(scenario())
+
+
+def test_repeated_failures_stop_the_dashboard_retrying():
+    """After enough of them, the retries are no longer plausibly going to succeed."""
+
+    async def scenario():
+        transport = StubTransport(error="ssh: connect to host torch port 22: timeout")
+        app = SlurmMonitorApp(transport, interval=2)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+
+            assert app.paused_by_failures
+            assert not app.auto_refresh_enabled
+            # And it says what to do about it, in the imperative.
+            notice = notice_text(app)
+            assert "quit with q" in notice
+            assert "press r to retry" in notice
+
+    run(scenario())
+
+
+def test_a_manual_refresh_resumes_after_a_failure_pause():
+    """`r` is the way back, and it must clear the penalty rather than re-trip it."""
+
+    async def scenario():
+        transport = StubTransport(error="nope")
+        app = SlurmMonitorApp(transport, interval=2)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+            assert app.paused_by_failures
+
+            transport.error = None  # the VPN came back
+            app.action_refresh_now()
+            await pilot.pause()
+
+            assert not app.paused_by_failures
+            assert app.consecutive_failures == 0
+            assert app.auto_refresh_enabled
+            assert app.snapshot is not None
+
+    run(scenario())
+
+
+def test_a_recovered_connection_restores_auto_refresh_by_itself():
+    """The usual recovery is the VPN reconnecting, with nobody at the keyboard.
+
+    Auto-refresh is off while paused, so nothing would ever call the transport again and
+    the dashboard would stay dead until someone pressed a key. The next successful
+    refresh has to undo the pause, however it was triggered.
+    """
+
+    async def scenario():
+        transport = StubTransport(error="nope")
+        app = SlurmMonitorApp(transport, interval=2)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+            assert app.paused_by_failures and not app.auto_refresh_enabled
+
+            transport.error = None
+            app._trigger_fetch()
+            await pilot.pause()
+
+            assert not app.paused_by_failures
+            assert app.auto_refresh_enabled
+            assert app.snapshot is not None
+
+    run(scenario())
+
+
+def test_the_dashboard_warns_about_a_cadence_that_is_too_fast():
+    """Nobody else can see this from the outside, so the screen has to say it."""
+
+    async def scenario():
+        app = SlurmMonitorApp(StubTransport(), interval=2)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            app._set_interval(2.0)
+            await pilot.pause()
+
+            # At two seconds the jobs interval alone asks for 1800 commands an hour.
+            assert commands_per_hour(intervals_of(app)) > BUSY_COMMANDS_PER_HOUR
+            messages = " ".join(str(n.message) for n in app._notifications)
+            assert "SLURM commands an hour" in messages
+
+    run(scenario())
+
+
+def test_config_warnings_are_shown_in_the_dashboard():
+    """A warning that only `doctor` sees is one the person running it never reads."""
+
+    async def scenario():
+        warning = "this would issue about 8478 SLURM commands an hour"
+        app = SlurmMonitorApp(StubTransport(), interval=60, config_warnings=(warning,))
+        async with app.run_test(size=(200, 40)) as pilot:
+            await pilot.pause()
+            assert warning in notice_text(app)
+            assert any(warning in str(n.message) for n in app._notifications)
+
+    run(scenario())
+
+
+def test_a_failure_pause_does_not_override_no_auto():
+    """`--no-auto` and a deliberate `a` keypress have to survive bad network.
+
+    The pause switches auto-refresh off, so undoing the pause must restore whatever was
+    true beforehand -- switching it on unconditionally would silently enable polling
+    that the user had turned off.
+    """
+
+    async def scenario():
+        transport = StubTransport(error="nope")
+        app = SlurmMonitorApp(transport, interval=2, auto=False)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+            assert app.paused_by_failures
+            assert not app.auto_refresh_enabled
+
+            transport.error = None
+            app._trigger_fetch()
+            await pilot.pause()
+
+            # The pause is over, but auto-refresh is still off, as it was.
+            assert not app.paused_by_failures
+            assert not app.auto_refresh_enabled
+            assert app.snapshot is not None
+
+    run(scenario())
+
+
+def test_a_manual_refresh_after_a_pause_is_an_explicit_request_to_watch():
+    """`r` means "keep going", so it does turn auto-refresh back on."""
+
+    async def scenario():
+        transport = StubTransport(error="nope")
+        app = SlurmMonitorApp(transport, interval=2, auto=False)
+        async with app.run_test(size=(200, 40)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+            assert not app.auto_refresh_enabled
+
+            transport.error = None
+            app.action_refresh_now()
+            await pilot.pause()
+
+            assert app.auto_refresh_enabled
+            assert any("resumed" in str(n.message) for n in app._notifications)
 
     run(scenario())

@@ -75,7 +75,7 @@ tells you the extra to install.
 
 ### Before you point it at Torch
 
-Two things have to be true, and `lampter doctor` will tell you which one is not:
+Three things have to be true, and `lampter doctor` will tell you about the first two:
 
 1. **SSH works non-interactively.** The tool runs `ssh <host> python3 -` with
    `BatchMode=yes` by default, so it fails fast rather than hanging on a password
@@ -83,6 +83,11 @@ Two things have to be true, and `lampter doctor` will tell you which one is not:
    usual way to name it.
 2. **The login node has the SLURM commands** — `squeue`, `sinfo`, `sacct`, `sstat`, and
    for the accounts view `sshare` and `sacctmgr`.
+3. **You will quit it when you are done.** The dashboard polls for as long as it is on
+   screen, and a window left open behind a dropped connection keeps making failing SSH
+   handshakes to a machine everybody shares. It backs off and then stops by itself, but
+   nothing can tell it that you walked away. See
+   [Please do not leave it running](#please-do-not-leave-it-running-and-do-not-turn-the-intervals-down).
 
 `host = "torch"` is the default, so `~/.ssh/config` needs an entry by that name (or pass
 `--host`). Nothing is written to the cluster.
@@ -260,9 +265,51 @@ to a minute to appear. Press `r` in the dashboard for an immediate refresh, or u
 The probe reports which sections it actually ran, and the dashboard **carries the
 older sections forward with their own timestamps** rather than blanking them, so the
 status line can say "capacity 45s" while the jobs are zero seconds old.
-`lampter doctor` prints the resulting cadence.
+`lampter doctor` prints the resulting cadence, and the rate it adds up to.
 
 A jobs-only refresh is also much quicker to look at: 0.86s versus 2.52s round trip.
+
+### Please do not leave it running, and do not turn the intervals down
+
+Two ways to make this somebody else's problem, and the tool now pushes back on both.
+
+**Quit when you are done.** A running dashboard polls for as long as it is on screen:
+that is what it is for, but it means a window left open overnight is 156 requests an
+hour that nobody is reading. Worse is the case where the connection has gone away — a
+dropped VPN, a laptop that suspended, a login node restarted. Then every refresh is a
+fresh SSH handshake *that fails*, against a login node everybody shares, and an
+unattended terminal will happily produce thousands of them.
+
+The dashboard will not do that quietly:
+
+* **It backs off.** After each failed refresh the next attempt is further away — 2×, 4×,
+  8× the interval, capped at five minutes — instead of knocking at the configured pace.
+* **Then it stops.** After ten consecutive failures it turns auto-refresh off and says
+  so on the notice line, because at that point the retries are no longer plausibly going
+  to succeed. Press `r` to try again, `a` to resume, or `q` to quit. A connection that
+  comes back on its own restores auto-refresh by itself.
+* The failure count and the next attempt are on screen the whole time, so a monitor that
+  has quietly died looks different from one that is working.
+
+**Do not turn the intervals down.** They are a budget against a shared controller, not a
+freshness dial to be maxed out. The defaults cost ~156 SLURM commands an hour, which is
+roughly 11× lighter than a `watch -n 2 squeue` habit; setting `refresh_interval = 2`
+costs ~1,800 an hour for a view of the queue that a 60-second poll already answers. A
+refresh below 2 seconds cannot even complete a round trip on a WAN link, so it only
+produces failing attempts.
+
+You are told rather than trusted:
+
+* `lampter doctor` prints the estimated cost of *your* configuration
+  (`cluster load  ~2.6 SLURM commands/min (~156/hour)`), so the effect of a change is
+  visible before you make it.
+* A configuration that works out above ~600 commands an hour is reported as a config
+  warning by `doctor`, and shown in the dashboard, with your own number in the message.
+* Pressing `-` in the dashboard past that point says so too, with the figure — the
+  keyboard is clamped to 2 seconds for the same reason.
+
+Neither of these is a limit on what you may do; they are there because the cost lands on
+a machine you do not own, and nothing else on your screen would tell you.
 
 ### Why `squeue --json` and `sacct --json`
 
