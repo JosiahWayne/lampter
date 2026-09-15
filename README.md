@@ -595,6 +595,18 @@ found while building it, each of which silently produces a wrong answer:
 
 ### Layout
 
+Above the table are two bars, each **exactly one row**: the status line (host, counts,
+longest wait, freshness, polling cadence, which view) and the notice line (failures,
+warnings, alerts). Neither ever grows. A bar that wrapped pushed the table down, so
+narrowing the window — or a warning arriving — moved everything under your cursor; now
+the table always starts on the third row, and what the bars cannot fit they drop instead
+of wrapping. The least important parts go first: the staleness of the slower collectors,
+then the sort mode, the polling cadence, the view name, "updated … ago", the longest
+wait, and last the job counts. The host survives longest, because a bar that does not say
+what it is watching is not saying much. Anything still too long is ellipsized, and a
+failure is raised as a toast in full as well — an SSH error puts its diagnosis at the end
+("Operation timed out"), which is the part a single line cuts.
+
 A fourteen-column table does not fit a normal terminal, and letting `rich` squeeze it
 collapses the flexible columns to a single character each. So the jobs view has three
 tiers, chosen by terminal width and re-chosen on resize:

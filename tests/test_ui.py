@@ -757,7 +757,7 @@ def test_a_failed_refresh_backs_off_instead_of_retrying_on_schedule():
             assert app.consecutive_failures >= 3
             # The wait is now the backoff, not the interval.
             assert app._next_refresh_at - time.monotonic() > app.refresh_interval
-            assert "failures in a row" in notice_text(app)
+            assert "in a row" in notice_text(app)
 
     run(scenario())
 
@@ -775,8 +775,9 @@ def test_repeated_failures_stop_the_dashboard_retrying():
             assert not app.auto_refresh_enabled
             # And it says what to do about it, in the imperative.
             notice = notice_text(app)
-            assert "quit with q" in notice
-            assert "press r to retry" in notice
+            assert "stopped after" in notice
+            assert "r retry" in notice
+            assert "q quit" in notice
 
     run(scenario())
 
@@ -907,3 +908,181 @@ def test_a_manual_refresh_after_a_pause_is_an_explicit_request_to_watch():
             assert any("resumed" in str(n.message) for n in app._notifications)
 
     run(scenario())
+
+
+def test_the_full_failure_reason_is_shown_even_though_the_bar_is_one_line():
+    """The bar ellipsizes, and an SSH error puts its diagnosis at the end.
+
+    "Operation timed out" is the part that says what to do, and it is exactly what a
+    one-line bar cuts, so the first failure of a streak has to say it in full somewhere
+    that can wrap.
+    """
+
+    async def scenario():
+        message = (
+            "ssh to torch failed: ssh: connect to host torch port 22: "
+            "Operation timed out after 15 seconds"
+        )
+        app = SlurmMonitorApp(StubTransport(error=message), interval=60)
+        async with app.run_test(size=(80, 20)) as pilot:
+            for _ in range(30):
+                if app.consecutive_failures:
+                    break
+                await pilot.pause()
+
+            # The bar has one line and cuts the tail...
+            assert "Operation timed out" not in notice_text(app)
+            # ...so the full message goes to a toast, which wraps.
+            assert any(
+                "Operation timed out" in str(notification.message)
+                for notification in app._notifications
+            )
+
+    run(scenario())
+
+
+def test_a_failure_pause_is_announced_in_full():
+    async def scenario():
+        app = SlurmMonitorApp(StubTransport(error="nope"), interval=2)
+        async with app.run_test(size=(80, 20)) as pilot:
+            await wait_for_failure(app, pilot, PAUSE_AFTER_FAILURES)
+            assert any(
+                "check the connection" in str(notification.message).lower()
+                for notification in app._notifications
+            )
+
+    run(scenario())
+
+
+# --------------------------------------------------- a status bar that never wraps
+
+
+@pytest.mark.parametrize("width", [60, 80, 100, 140, 200, 260])
+def test_both_bars_are_one_line_at_every_width(width):
+    """The layout must not move when the terminal narrows.
+
+    A wrapping bar pushes the table down, so a half-screen window looked different
+    depending on how much the status line had to say -- and it changed again the moment
+    a warning appeared. Both bars are now exactly one row, and the table always starts on
+    the third.
+    """
+
+    async def scenario():
+        app = SlurmMonitorApp(StubTransport(), interval=60)
+        async with app.run_test(size=(width, 20)) as pilot:
+            for _ in range(30):
+                if app.snapshot is not None:
+                    break
+                await pilot.pause()
+            app._update_summary()
+            await pilot.pause()
+
+            assert app.query_one("#summary", Static).region.height == 1
+            assert app.query_one("#notice", Static).region.height == 1
+            assert app.query_one("#jobs").region.y == 3
+
+    run(scenario())
+
+
+@pytest.mark.parametrize("width", [60, 80, 100, 140])
+def test_a_long_notice_still_fits_one_line(width):
+    """Warnings, errors and alerts all share the same single row."""
+
+    async def scenario():
+        app = SlurmMonitorApp(
+            StubTransport(),
+            interval=60,
+            config_warnings=(
+                "this would issue about 8478 SLURM commands an hour against a shared "
+                "controller (the defaults are about 156)",
+            ),
+        )
+        async with app.run_test(size=(width, 20)) as pilot:
+            for _ in range(30):
+                if app.snapshot is not None:
+                    break
+                await pilot.pause()
+            app._update_summary()
+            await pilot.pause()
+
+            notice = app.query_one("#notice", Static)
+            assert notice.region.height == 1
+            rendered = str(notice.render())
+            assert len(rendered) <= width - 2  # the CSS padding is one column each side
+
+    run(scenario())
+
+
+def test_the_summary_keeps_the_important_parts_when_it_is_squeezed():
+    """Saying less beats cutting a word in half.
+
+    The host and the job counts are what the bar exists to say; the section ages and the
+    Slurm version are the first to go.
+    """
+
+    async def scenario():
+        app = SlurmMonitorApp(StubTransport(), interval=60)
+        async with app.run_test(size=(80, 20)) as pilot:
+            for _ in range(30):
+                if app.snapshot is not None:
+                    break
+                await pilot.pause()
+            app._update_summary()
+            await pilot.pause()
+            narrow = str(app.query_one("#summary", Static).render())
+
+        app = SlurmMonitorApp(StubTransport(), interval=60)
+        async with app.run_test(size=(240, 20)) as pilot:
+            for _ in range(30):
+                if app.snapshot is not None:
+                    break
+                await pilot.pause()
+            app._update_summary()
+            await pilot.pause()
+            wide = str(app.query_one("#summary", Static).render())
+
+        # What survives at 80: the host and the counts, whole.
+        assert "stub-host" in narrow
+        assert "running" in narrow and "pending" in narrow
+        assert not narrow.endswith("…"), narrow
+        # What is dropped at 80 is present at 240.
+        assert "slurm" in wide and "capacity" in wide
+        assert "slurm" not in narrow
+
+    run(scenario())
+
+
+def test_the_view_indicator_is_a_segment_not_a_suffix():
+    """It used to be appended after fitting, so a narrow bar ended "sort wa…".
+
+    As segments with their own (lower) priorities, the sort mode disappears whole while
+    the view name stays, and neither is ever half-cut. The widths below are measured, not
+    guessed: 110 columns is where the view name starts to fit, and 150 where the sort
+    mode joins it.
+    """
+
+    async def bar_at(width: int) -> str:
+        app = SlurmMonitorApp(StubTransport(), interval=60)
+        async with app.run_test(size=(width, 20)) as pilot:
+            for _ in range(30):
+                if app.snapshot is not None:
+                    break
+                await pilot.pause()
+            app._update_summary()
+            await pilot.pause()
+            return str(app.query_one("#summary", Static).render())
+
+    narrow = run(bar_at(80))
+    middling = run(bar_at(110))
+    wide = run(bar_at(150))
+
+    # At 80 there is room for the host, the counts and the longest wait.
+    assert "stub-host" in narrow and "running" in narrow and "longest wait" in narrow
+    assert "jobs" not in narrow
+    assert "…" not in narrow  # dropped whole, never cut
+
+    # The view name fits well before the sort mode does.
+    assert middling.endswith("jobs")
+    assert "sort" not in middling
+
+    assert wide.endswith("jobs sort wait ↑")

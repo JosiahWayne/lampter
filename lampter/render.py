@@ -658,6 +658,164 @@ def build_alert_table(
     return _table_for(ALERT_COLUMNS, rows, title=title)
 
 
+def truncate_text(text: Text, width: int) -> Text:
+    """Clip a ``Text`` to ``width`` cells, marking the cut with an ellipsis.
+
+    Textual can ellipsize a widget itself, but doing it here keeps the dashboard and the
+    one-shot commands consistent and makes the behaviour testable without a terminal --
+    and it preserves the styles of whatever survives.
+    """
+    if width <= 0:
+        return Text()
+    if text.cell_len <= width:
+        return text
+    clipped = text.copy()
+    clipped.truncate(width, overflow="ellipsis")
+    return clipped
+
+
+def fit_line(pieces: list[tuple[int, Text]], width: int | None) -> Text:
+    """Join priority-tagged pieces, dropping the least important until they fit.
+
+    A status bar that wraps pushes the table down and makes the whole screen jump; one
+    that clips mid-word ("longest wait 16h…") is barely better. So the bar is assembled
+    from pieces, each tagged with how readily it can go, and the least important are
+    dropped -- at a boundary a reader can understand -- before anything is truncated.
+
+    Pieces are given in display order and each carries its own leading separator, so
+    dropping one from the middle can never leave a dangling `│`. The first piece is never
+    dropped: it is where the important thing is.
+    """
+    kept = list(pieces)
+    while width is not None and len(kept) > 1 and _cells(kept) > width:
+        least_important = min(range(len(kept)), key=lambda index: kept[index][0])
+        del kept[least_important]
+    line = Text()
+    for _priority, piece in kept:
+        line.append_text(piece)
+    return truncate_text(line, width) if width is not None else line
+
+
+def _cells(pieces: list[tuple[int, Text]]) -> int:
+    return sum(piece.cell_len for _priority, piece in pieces)
+
+
+#: How readily each part of the summary survives a narrow terminal: higher is kept
+#: longer, and the least important are dropped first. The host and the job counts are
+#: what the bar exists to say; the rest is detail a narrow window cannot afford, and
+#: saying less is better than moving the table under the reader's cursor.
+#:
+#: A piece that only makes sense after another must sit *below* it, since dropping
+#: always starts at the bottom: `sort` can vanish without taking `view` with it, but
+#: never the other way round.
+SUMMARY_PRIORITIES: dict[str, int] = {
+    "target": 100,
+    "counts": 95,
+    "longest_wait": 85,
+    "updated": 75,
+    "alerts": 70,
+    "view": 68,
+    "auto": 55,
+    "sort": 50,
+    "ages": 40,
+    "slurm": 30,
+}
+
+
+def summary_pieces(
+    snapshot: Snapshot,
+    now: float,
+    *,
+    target: str,
+    interval: float,
+    auto: bool,
+    next_refresh_in: float | None = None,
+    show_section_ages: bool = False,
+) -> list[tuple[int, Text]]:
+    """The summary bar's segments, each tagged with how readily it can be dropped.
+
+    Returned rather than joined so a caller with extra segments of its own -- the
+    dashboard adds which view is on screen -- can put them through the same budget
+    instead of gluing them on afterwards and watching them get cut in half.
+
+    ``show_section_ages`` adds how stale the slower collectors are, which matters in the
+    dashboard -- where a jobs-only refresh is normal -- and is noise in a one-shot
+    command, where everything was just fetched together.
+    """
+    counts = snapshot.counts()
+    pieces: list[tuple[int, Text]] = []
+
+    text = Text()
+    text.append(target, style="bold cyan")
+    pieces.append((SUMMARY_PRIORITIES["target"], text))
+
+    if snapshot.slurm_version:
+        pieces.append(
+            (
+                SUMMARY_PRIORITIES["slurm"],
+                Text.assemble((" · slurm ", "dim"), (snapshot.slurm_version, "dim")),
+            )
+        )
+
+    text = Text("  │  ")
+    text.append(f"{counts['running']} running", style="bold green")
+    text.append(" · ")
+    text.append(f"{counts['pending']} pending", style="bold yellow")
+    if counts["other"]:
+        text.append(" · ")
+        text.append(f"{counts['other']} other", style="dim")
+    pieces.append((SUMMARY_PRIORITIES["counts"], text))
+
+    longest = snapshot.longest_wait(now)
+    if longest is not None:
+        pieces.append(
+            (
+                SUMMARY_PRIORITIES["longest_wait"],
+                Text.assemble(
+                    ("  │  longest wait ", ""), (humanize_seconds(longest), "bold yellow")
+                ),
+            )
+        )
+
+    text = Text("  │  updated ")
+    text.append(f"{humanize_seconds(snapshot.age_sec(now))} ago")
+    if snapshot.probe_elapsed_sec is not None:
+        text.append(f" (probe {snapshot.probe_elapsed_sec:.2f}s)", style="dim")
+    pieces.append((SUMMARY_PRIORITIES["updated"], text))
+
+    if auto:
+        when = "-" if next_refresh_in is None else humanize_seconds(max(0, next_refresh_in))
+        pieces.append(
+            (
+                SUMMARY_PRIORITIES["auto"],
+                Text(f"  │  auto {humanize_seconds(interval)} · next {when}", style="dim"),
+            )
+        )
+    else:
+        pieces.append(
+            (SUMMARY_PRIORITIES["auto"], Text("  │  auto-refresh off", style="dim"))
+        )
+
+    if show_section_ages:
+        ages = Text()
+        partitions_age = snapshot.partitions_age_sec(now)
+        if partitions_age is not None:
+            ages.append(f"  │  capacity {humanize_seconds(partitions_age)}", style="dim")
+        history_age = snapshot.history_age_sec(now)
+        if history_age is not None:
+            ages.append(f" · history {humanize_seconds(history_age)}", style="dim")
+        usage_age = snapshot.usage_age_sec(now)
+        if usage_age is not None:
+            ages.append(f" · usage {humanize_seconds(usage_age)}", style="dim")
+        accounts_age = snapshot.accounts_age_sec(now)
+        if accounts_age is not None:
+            ages.append(f" · accts {humanize_seconds(accounts_age)}", style="dim")
+        if ages.cell_len:
+            pieces.append((SUMMARY_PRIORITIES["ages"], ages))
+
+    return pieces
+
+
 def summary_line(
     snapshot: Snapshot,
     now: float,
@@ -666,38 +824,26 @@ def summary_line(
     interval: float,
     auto: bool,
     next_refresh_in: float | None = None,
+    show_section_ages: bool = False,
+    width: int | None = None,
 ) -> Text:
-    """The one-line summary shown above the table in both front ends."""
-    counts = snapshot.counts()
-    text = Text()
-    text.append(target, style="bold cyan")
-    if snapshot.slurm_version:
-        text.append(f" · slurm {snapshot.slurm_version}", style="dim")
+    """The one-line summary shown above the table in both front ends.
 
-    text.append("  │  ")
-    text.append(f"{counts['running']} running", style="bold green")
-    text.append(" · ")
-    text.append(f"{counts['pending']} pending", style="bold yellow")
-    if counts["other"]:
-        text.append(" · ")
-        text.append(f"{counts['other']} other", style="dim")
-
-    longest = snapshot.longest_wait(now)
-    if longest is not None:
-        text.append("  │  longest wait ")
-        text.append(humanize_seconds(longest), style="bold yellow")
-
-    text.append("  │  updated ")
-    text.append(f"{humanize_seconds(snapshot.age_sec(now))} ago")
-    if snapshot.probe_elapsed_sec is not None:
-        text.append(f" (probe {snapshot.probe_elapsed_sec:.2f}s)", style="dim")
-
-    if auto:
-        when = "-" if next_refresh_in is None else humanize_seconds(max(0, next_refresh_in))
-        text.append(f"  │  auto {humanize_seconds(interval)} · next {when}", style="dim")
-    else:
-        text.append("  │  auto-refresh off", style="dim")
-    return text
+    ``width``, when given, is a budget in cells: the least important parts are dropped
+    until the line fits rather than being allowed to wrap.
+    """
+    return fit_line(
+        summary_pieces(
+            snapshot,
+            now,
+            target=target,
+            interval=interval,
+            auto=auto,
+            next_refresh_in=next_refresh_in,
+            show_section_ages=show_section_ages,
+        ),
+        width,
+    )
 
 
 # ------------------------------------------------------------------ views

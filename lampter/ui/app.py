@@ -37,13 +37,16 @@ from ..load import (
 )
 from ..models import SORT_MODES, Alert, Snapshot
 from ..render import (
+    SUMMARY_PRIORITIES,
     VIEW_KEY_LABELS,
     VIEW_TITLES,
     VIEWS,
     WIDE_LAYOUT,
     Column,
     columns_for_view,
-    summary_line,
+    fit_line,
+    summary_pieces,
+    truncate_text,
     view_rows,
 )
 from ..store import HistoryStore, StoreError
@@ -63,13 +66,18 @@ class SlurmMonitorApp(App[None]):
     Screen {
         layout: vertical;
     }
+    /* Both bars are exactly one line, whatever they have to say. A bar that grows
+       pushes the table down, and a monitor whose layout moves when the terminal is
+       resized -- or when a warning appears -- is worse than one that shows less. */
     #summary {
-        height: auto;
+        height: 1;
         padding: 0 1;
+        text-overflow: ellipsis;
     }
     #notice {
-        height: auto;
+        height: 1;
         padding: 0 1;
+        text-overflow: ellipsis;
     }
     #jobs {
         height: 1fr;
@@ -362,6 +370,14 @@ class SlurmMonitorApp(App[None]):
         self.consecutive_failures += 1
         # Deliberately keep whatever snapshot we already had on screen.
         #
+        # The bar is one fixed line, so a long message is ellipsized -- and an SSH error
+        # puts its diagnosis at the *end* ("Operation timed out", "Permission denied"),
+        # which is exactly the part that gets cut. So the first failure of a streak, and
+        # the moment the dashboard gives up, also raise a toast: those wrap and float,
+        # so the whole reason is readable without the layout moving.
+        if self.consecutive_failures == 1:
+            self.notify(message, title="refresh failed", severity="error", timeout=10)
+        #
         # Slow down. A monitor whose connection has gone away -- a dropped VPN, a
         # suspended laptop -- must not keep knocking at the configured interval: each
         # attempt is a fresh SSH handshake to a shared login node, and an unattended
@@ -373,6 +389,13 @@ class SlurmMonitorApp(App[None]):
                 self._auto_before_failure_pause = self.auto_refresh_enabled
             self.paused_by_failures = True
             self.auto_refresh_enabled = False
+            self.notify(
+                f"stopped after {self.consecutive_failures} failed refreshes. "
+                "Check the connection, or quit if you are done.",
+                title="refresh failed",
+                severity="error",
+                timeout=12,
+            )
         else:
             delay = retry_delay(self.refresh_interval, self.consecutive_failures)
             self._next_refresh_at = now + delay
@@ -443,89 +466,121 @@ class SlurmMonitorApp(App[None]):
         elif self._row_ids:
             table.move_cursor(row=0)
 
+    def _bar_width(self) -> int:
+        """Cells available to one bar, after the CSS padding of one column each side."""
+        return max(0, self.size.width - 2)
+
     def _update_summary(self) -> None:
         summary = self.query_one("#summary", Static)
         notice = self.query_one("#notice", Static)
+        width = self._bar_width()
 
         if self.snapshot is None:
-            line = Text(f"{self.transport.describe()} — waiting for first snapshot…", style="dim")
-            summary.update(line)
+            # Still truncated: a slow first probe must not be able to move the table.
+            summary.update(
+                truncate_text(
+                    Text(
+                        f"{self.transport.describe()} — waiting for first snapshot…",
+                        style="dim",
+                    ),
+                    width,
+                )
+            )
         else:
             remaining = (
                 self._next_refresh_at - time.monotonic() if self.auto_refresh_enabled else None
             )
-            line = summary_line(
+            # The view indicator goes through the same budget as everything else, as two
+            # pieces: at a narrow width the sort mode goes before the view name, so the
+            # bar never ends in a half-word like "sort wa…".
+            pieces = summary_pieces(
                 self.snapshot,
                 time.time(),
                 target=self.transport.describe(),
                 interval=self.refresh_interval,
                 auto=self.auto_refresh_enabled,
                 next_refresh_in=remaining,
+                show_section_ages=True,
             )
-            arrow = "↓" if self.sort_reverse else "↑"
-            line.append(f"  │  {self.view}", style="bold")
+            view = Text(f"  │  {self.view}", style="bold")
+            pieces.append((SUMMARY_PRIORITIES["view"], view))
             if self.view == "jobs":
-                line.append(f" sort {self.sort_mode} {arrow}", style="dim")
-            elif self.view == "partitions" and self.only_mine:
-                line.append(" mine only", style="dim")
-            # Say how old the slower collectors are, rather than implying that a
-            # jobs-only refresh also refreshed capacity.
-            now = time.time()
-            partitions_age = self.snapshot.partitions_age_sec(now)
-            history_age = self.snapshot.history_age_sec(now)
-            if partitions_age is not None:
-                line.append(
-                    f"  │  capacity {humanize_seconds(partitions_age)}", style="dim"
-                )
-            if history_age is not None:
-                line.append(f" · history {humanize_seconds(history_age)}", style="dim")
-            usage_age = self.snapshot.usage_age_sec(now)
-            if usage_age is not None:
-                line.append(f" · usage {humanize_seconds(usage_age)}", style="dim")
-            accounts_age = self.snapshot.accounts_age_sec(now)
-            if accounts_age is not None:
-                line.append(f" · accts {humanize_seconds(accounts_age)}", style="dim")
-            if self.alerts:
-                line.append(f"  │  {len(self.alerts)} alert", style="bold yellow")
-                if len(self.alerts) > 1:
-                    line.append("s", style="bold yellow")
-            summary.update(line)
-
-        parts: list[Text] = []
-        if self.paused_by_failures:
-            # The most important thing on screen when it happens: the dashboard has
-            # stopped updating by itself, and it will not start again on its own.
-            parts.append(
-                Text(
-                    f"⚠ stopping after {self.consecutive_failures} failed refreshes. "
-                    "If you are done, quit with q; otherwise check the connection and "
-                    "press r to retry.",
-                    style="bold red",
-                )
-            )
-        elif self.last_error:
-            parts.append(Text(f"⚠ {self.last_error}", style="bold red"))
-            if self.consecutive_failures > 1:
-                parts.append(
-                    Text(
-                        f"retrying in {humanize_seconds(self._retry_in())} "
-                        f"({self.consecutive_failures} failures in a row)",
-                        style="yellow",
+                arrow = "↓" if self.sort_reverse else "↑"
+                pieces.append(
+                    (
+                        SUMMARY_PRIORITIES["sort"],
+                        Text(f" sort {self.sort_mode} {arrow}", style="dim"),
                     )
                 )
+            elif self.view == "partitions" and self.only_mine:
+                pieces.append(
+                    (SUMMARY_PRIORITIES["sort"], Text(" mine only", style="dim"))
+                )
+            if self.alerts:
+                label = "alert" if len(self.alerts) == 1 else "alerts"
+                pieces.append(
+                    (
+                        SUMMARY_PRIORITIES["alerts"],
+                        Text(f"  │  {len(self.alerts)} {label}", style="bold yellow"),
+                    )
+                )
+            summary.update(fit_line(pieces, width))
+
+        notice.update(truncate_text(self._notice_line(), width))
+
+    def _notice_line(self) -> Text:
+        """Whatever needs attention, as one line.
+
+        Priority-ordered rather than concatenated: when the line has to be cut, what
+        survives should be the reason the dashboard is unhappy, not whichever message
+        happened to be longest. The full text of every item is one keypress away in the
+        alerts and history views, so a one-line bar is a summary, not the only copy.
+        """
+        pieces: list[tuple[int, Text]] = []
+
+        def add(priority: int, text: Text) -> None:
+            if pieces:  # every piece after the first carries its own separator
+                text = Text.assemble(("  │  ", "dim"), text)
+            pieces.append((priority, text))
+
+        if self.paused_by_failures:
+            # The dashboard has stopped updating by itself and will not start again
+            # without a keypress, so this outranks everything else on the line.
+            add(
+                100,
+                Text(
+                    f"⚠ stopped after {self.consecutive_failures} failed refreshes "
+                    "· r retry · q quit",
+                    style="bold red",
+                ),
+            )
+        elif self.last_error:
+            add(90, Text(f"⚠ {self.last_error}", style="bold red"))
+            if self.consecutive_failures > 1:
+                # Below the error: the cause is what the reader has to act on.
+                add(
+                    40,
+                    Text(
+                        f"retrying in {humanize_seconds(self._retry_in())} "
+                        f"({self.consecutive_failures} in a row)",
+                        style="yellow",
+                    ),
+                )
         elif self._fetching:
-            parts.append(Text("refreshing…", style="dim"))
+            add(10, Text("refreshing…", style="dim"))
+
         if self.store_error:
-            parts.append(Text(f"history db: {self.store_error}", style="yellow"))
+            add(70, Text(f"history db: {self.store_error}", style="yellow"))
         if self.snapshot is not None and self.snapshot.errors:
-            parts.append(Text("probe: " + "; ".join(self.snapshot.errors), style="yellow"))
+            add(80, Text("probe: " + "; ".join(self.snapshot.errors), style="yellow"))
         for warning in self.config_warnings:
-            parts.append(Text(f"config: {warning}", style="yellow"))
+            add(60, Text(f"config: {warning}", style="yellow"))
         if self.alerts:
             latest = self.alerts[0]
             style = "bold red" if latest.severity == "error" else "yellow"
-            parts.append(Text(f"● {latest.message}", style=style))
-        notice.update(Text("\n").join(parts) if parts else Text(""))
+            add(50, Text(f"● {latest.message}", style=style))
+
+        return fit_line(pieces, self._bar_width())
 
     def _retry_in(self) -> float:
         """Seconds until the next attempt, floored at zero."""

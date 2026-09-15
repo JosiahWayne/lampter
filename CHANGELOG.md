@@ -21,6 +21,16 @@ than estimated.
 
 ### Views
 
+* **The status bar and the notice line are each exactly one row.** They used to grow —
+  the summary wrapped when the terminal narrowed, and the notice grew a line per warning
+  — which pushed the table down. Resizing a half-screen window therefore moved everything
+  under the cursor, and a warning appearing did the same. Both bars are now fixed height
+  and drop their least important parts instead of wrapping (the section ages go first,
+  then the sort mode, then the polling cadence; the host and the job counts stay
+  longest), so the table always starts on the third row. A message that no longer fits is
+  ellipsized in the bar and raised as a toast in full, because an SSH error puts its
+  diagnosis at the end — "Operation timed out" — which is exactly what a one-line bar
+  cuts.
 * **jobs** — state, account, partition, GPU utilisation, live memory, submitted/started
   times, the queue wait (the same definition for pending and running jobs, so the column
   is comparable down the table), and the scheduler's reason glossed into plain English.
