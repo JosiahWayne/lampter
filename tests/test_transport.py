@@ -93,6 +93,18 @@ def test_argv_passes_a_non_default_history_window():
     assert "--history-hours" not in SSHTransport("torch", history_hours=12)._argv()
 
 
+def test_argv_passes_a_non_default_accounting_window():
+    """`--account-days` was documented, configurable and silently inert.
+
+    The transport forwarded `--history-hours` but never this, so the probe always
+    totalled its own seven-day default while `doctor` printed the configured value.
+    """
+    argv = SSHTransport("torch", account_days=30)._argv(("accounts",))
+    index = argv.index("--account-days")
+    assert argv[index + 1] == "30"
+    assert "--account-days" not in SSHTransport("torch", account_days=7)._argv(("accounts",))
+
+
 def test_argv_omits_user_when_unset():
     argv = SSHTransport("torch")._argv()
     assert "--user" not in argv

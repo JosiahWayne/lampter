@@ -510,24 +510,59 @@ def collect_partitions(
 # --------------------------------------------------------------------- history
 
 
+def _block(value: object) -> dict:
+    """Read a JSON field as a mapping, whatever shape the controller sent.
+
+    This exists because ``--json`` output is *versioned*, not stable: Slurm's
+    ``data_parser`` schema moves between releases, and the same field changes shape.
+    ``exit_code`` is an object on 23.11+ and a bare integer before it. Reading a scalar
+    as if it were a mapping raises ``AttributeError``, and because history is collected
+    inside :func:`build_payload` with no per-collector guard, that used to abort the
+    *entire* probe: every section came back empty, and the client then treated them as
+    freshly fetched and threw away the last good snapshot.
+    """
+    return value if isinstance(value, dict) else {}
+
+
 def normalize_history_job(raw: dict) -> dict:
     """Flatten one ``sacct --json`` record into the dashboard's wire format.
 
     Note that sacct nests every timestamp under ``time`` (unlike ``squeue``, which
     puts them at the top level), and reports state as ``{"current": [...],
     "reason": ...}``.
-    """
-    state_block = raw.get("state") or {}
-    states = state_block.get("current") or []
-    state = states[0] if isinstance(states, list) and states else str(states or "UNKNOWN")
 
-    time_block = raw.get("time") or {}
-    exit_block = raw.get("exit_code") or {}
-    statuses = exit_block.get("status") or []
-    array = raw.get("array") or {}
+    Every nested field is read defensively through :func:`_block`, because the schema
+    is versioned and a wrong guess must degrade one field rather than lose the snapshot.
+    Where the controller sends a *scalar* instead of the object -- an integer
+    ``exit_code``, a plain string ``state`` -- the value is kept rather than discarded,
+    since the information is still meaningful.
+    """
+    state_block = _block(raw.get("state"))
+    if state_block:
+        states = state_block.get("current") or []
+        state = states[0] if isinstance(states, list) and states else str(states or "UNKNOWN")
+    else:
+        state = str(raw.get("state") or "UNKNOWN")
+
+    time_block = _block(raw.get("time"))
+    array = _block(raw.get("array"))
+
+    exit_block = _block(raw.get("exit_code"))
+    if exit_block:
+        statuses = exit_block.get("status") or []
+        exit_status = statuses[0] if isinstance(statuses, list) and statuses else ""
+        # A return code of 0 is meaningful, so it is not mapped to None.
+        exit_code = unwrap_number(exit_block.get("return_code"))
+        exit_signal = unwrap_number(_block(exit_block.get("signal")).get("id"))
+    else:
+        # A bare integer is the whole exit code: no status word, no signal.
+        exit_status = ""
+        exit_code = unwrap_number(raw.get("exit_code"))
+        exit_signal = None
 
     gpus = 0
-    for item in (raw.get("tres") or {}).get("allocated") or []:
+    allocated = _block(raw.get("tres")).get("allocated") or []
+    for item in allocated if isinstance(allocated, list) else []:
         if isinstance(item, dict) and item.get("type") == "gres" and item.get("name") == "gpu":
             gpus += int(item.get("count") or 0)
 
@@ -543,10 +578,9 @@ def normalize_history_job(raw: dict) -> dict:
         "qos": raw.get("qos") or "",
         "state": state,
         "reason": state_block.get("reason") or "",
-        "exit_status": statuses[0] if isinstance(statuses, list) and statuses else "",
-        # A return code of 0 is meaningful, so it is not mapped to None.
-        "exit_code": unwrap_number(exit_block.get("return_code")),
-        "exit_signal": unwrap_number((exit_block.get("signal") or {}).get("id")),
+        "exit_status": exit_status,
+        "exit_code": exit_code,
+        "exit_signal": exit_signal,
         "submit_time": unwrap_number(time_block.get("submission"), zero_is_none=True),
         "eligible_time": unwrap_number(time_block.get("eligible"), zero_is_none=True),
         "start_time": unwrap_number(time_block.get("start"), zero_is_none=True),
@@ -1488,6 +1522,10 @@ def main(argv: list[str]) -> int:
                 "hostname": socket.gethostname(),
                 "user": "",
                 "slurm_version": None,
+                # An empty list, not a missing key: the client infers "what was
+                # fetched" from this field, and a missing one would make it believe
+                # these empty tables were fresh data and drop the last good snapshot.
+                "sections": [],
                 "jobs": [],
                 "partitions": [],
                 "history": [],
@@ -1514,6 +1552,10 @@ def main(argv: list[str]) -> int:
             "hostname": socket.gethostname(),
             "user": user,
             "slurm_version": None,
+            # `sections` is deliberately empty, so a crash costs a refresh rather than
+            # the table: the client keeps carrying the previous data, and the error
+            # below is what the user sees.
+            "sections": [],
             "jobs": [],
             "partitions": [],
             "history": [],

@@ -75,6 +75,7 @@ class SSHTransport:
         command_timeout: int = 60,
         batch_mode: bool = True,
         history_hours: int = 12,
+        account_days: int = 7,
         probe_path: Path | None = None,
     ) -> None:
         self.host = host
@@ -85,6 +86,7 @@ class SSHTransport:
         self.command_timeout = command_timeout
         self.batch_mode = batch_mode
         self.history_hours = history_hours
+        self.account_days = account_days
         self._probe_path = probe_path or _probe_source_path()
         self._source_cache: str | None = None
 
@@ -128,6 +130,11 @@ class SSHTransport:
         argv += ["--sections", ",".join(sections or DEFAULT_SECTIONS)]
         if self.history_hours and self.history_hours != 12:
             argv += ["--history-hours", str(self.history_hours)]
+        # Forwarded only when it differs from the probe's own default, to keep the
+        # command line (and the `doctor` output) free of noise. Omitting this is why
+        # `--account-days` and `LAMPTER_ACCOUNT_DAYS` were silently inert.
+        if self.account_days and self.account_days != 7:
+            argv += ["--account-days", str(self.account_days)]
         return argv
 
     def describe(self) -> str:

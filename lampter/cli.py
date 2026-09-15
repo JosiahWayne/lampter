@@ -65,6 +65,7 @@ def make_transport(config: Config) -> SSHTransport:
         command_timeout=config.command_timeout,
         batch_mode=config.batch_mode,
         history_hours=config.history_hours,
+        account_days=config.account_days,
     )
 
 

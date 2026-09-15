@@ -323,3 +323,137 @@ def test_main_passes_the_requested_user(tmp_path, monkeypatch, capsys):
     emitted = read_emitted(capsys)
     assert emitted["user"] == "someone"
     assert "--user someone" in args_file.read_text()
+
+
+# ---------------------------------------------- sacct --json schema tolerance
+#
+# The payload below is the shape 23.11+ emits. It is spelled out rather than captured
+# because the point is the *shape*, and because nothing else in the suite exercises
+# `normalize_history_job` at all: the captured fixture is already in the client's wire
+# format, so the probe's own sacct flattening has no coverage otherwise. That gap is
+# why an `AttributeError` on a scalar `exit_code` could blank the whole dashboard.
+
+
+def sacct_record(**overrides) -> dict:
+    """One realistic ``sacct --json`` record, 23.11-and-later shape."""
+    record = {
+        "job_id": 17325640,
+        "name": "train_gen",
+        "partition": "h100_tandon",
+        "account": "acct_alpha",
+        "qos": "gpu168",
+        "state": {"current": ["COMPLETED"], "reason": "None"},
+        "exit_code": {
+            "status": ["SUCCESS"],
+            "return_code": {"set": True, "infinite": False, "number": 0},
+            "signal": {"id": {"set": True, "infinite": False, "number": 0}, "name": ""},
+        },
+        "time": {
+            "submission": {"set": True, "infinite": False, "number": 1757000000},
+            "start": {"set": True, "infinite": False, "number": 1757000060},
+            "end": {"set": True, "infinite": False, "number": 1757003600},
+            "elapsed": {"set": True, "infinite": False, "number": 3540},
+            "limit": {"set": True, "infinite": False, "number": 2880},
+        },
+        "tres": {"allocated": [{"type": "gres", "name": "gpu", "count": 2}]},
+        "array": {"job_id": 0, "task_id": 0},
+        "nodes": "gh007",
+        "allocation_nodes": {"set": True, "infinite": False, "number": 1},
+    }
+    record.update(overrides)
+    return record
+
+
+def test_normalize_history_job_reads_the_23_11_shape():
+    job = rp.normalize_history_job(sacct_record())
+    assert job["state"] == "COMPLETED"
+    assert job["reason"] == "None"
+    assert job["exit_status"] == "SUCCESS"
+    assert job["exit_code"] == 0
+    assert job["gpus"] == 2
+    assert job["start_time"] == 1757000060
+    assert job["elapsed_sec"] == 3540
+    assert job["time_limit_min"] == 2880
+
+
+@pytest.mark.parametrize(
+    ("field", "value"),
+    [
+        # `exit_code` was a bare integer before 23.11, and some 24.05 builds emit it
+        # that way again. `0` is the dangerous one: it is falsy, so `value or {}`
+        # silently turned it into "no exit code at all".
+        ("exit_code", 1),
+        ("exit_code", 0),
+        # `state` as a plain string, as other Slurm subcommands report it.
+        ("state", "FAILED"),
+        # A block that is simply absent.
+        ("exit_code", None),
+        ("time", None),
+        ("tres", None),
+        ("array", None),
+    ],
+)
+def test_normalize_history_job_survives_a_schema_shift(field, value):
+    """A shape change must cost one field, not the whole snapshot.
+
+    Reading a scalar as a mapping raised `AttributeError` inside `build_payload`, whose
+    only guard is `main`'s last-resort handler -- which blanked every section and, by
+    omitting `sections`, made the client discard the last good data too.
+    """
+    job = rp.normalize_history_job(sacct_record(**{field: value}))
+    assert job["job_id"] == 17325640  # the record still came through
+
+
+def test_normalize_history_job_keeps_a_scalar_state_and_exit_code():
+    """The information is still meaningful, so it is kept rather than dropped."""
+    job = rp.normalize_history_job(sacct_record(state="FAILED", exit_code=2))
+    assert job["state"] == "FAILED"
+    assert job["exit_code"] == 2
+    assert job["exit_status"] == ""  # no status word in the scalar shape
+
+
+def test_normalize_history_job_keeps_a_zero_exit_code():
+    job = rp.normalize_history_job(sacct_record(exit_code=0))
+    assert job["exit_code"] == 0
+
+
+def test_a_crashing_probe_claims_no_sections(monkeypatch, capsys):
+    """The crash fallback must not look like a successful refresh.
+
+    `Snapshot.from_payload` infers "what was fetched" from `sections`, and
+    `merged_with` carries forward everything else. Omitting the key made a crashed
+    probe look like a fresh snapshot of empty tables, so the previous rows were thrown
+    away -- the opposite of degrading gracefully.
+    """
+    monkeypatch.setenv("LAMPTER_USER", "tester")
+
+    def boom(*args, **kwargs):
+        raise AttributeError("'int' object has no attribute 'get'")
+
+    monkeypatch.setattr(rp, "build_payload", boom)
+
+    assert rp.main([]) == 0
+    emitted = read_emitted(capsys)
+    assert emitted["sections"] == []
+    assert any("probe crashed" in error for error in emitted["errors"])
+
+    # And the client keeps the data it already had.
+    from lampter.models import Snapshot
+
+    previous = Snapshot.from_payload(
+        {"sections": ["partitions"], "partitions": [{"name": "h200", "gpus_total": 272}]},
+        fetched_at=100.0,
+    )
+    crashed = Snapshot.from_payload(emitted, fetched_at=200.0)
+    assert crashed.partitions == ()
+    merged = crashed.merged_with(previous)
+    assert [p.name for p in merged.partitions] == ["h200"]
+    assert merged.partitions_at == 100.0
+
+
+def test_an_unknown_username_fallback_claims_no_sections(monkeypatch, capsys):
+    monkeypatch.setattr(rp, "resolve_user", lambda _: "")
+    assert rp.main([]) == 0
+    emitted = read_emitted(capsys)
+    assert emitted["sections"] == []
+    assert emitted["errors"] == ["could not determine the remote username"]
