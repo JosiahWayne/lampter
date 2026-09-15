@@ -97,6 +97,12 @@ class Config:
     pending_alert_sec: int = 6 * 3600
     #: Alert once when a running job has this little time left.
     limit_soon_sec: int = 15 * 60
+    #: Render from the bundled sample dataset instead of contacting anything.
+    #: Deliberately **not** in :data:`ENV_NAMES`: this is a per-invocation mode, and a
+    #: config file or environment variable that quietly pinned the dashboard to sample
+    #: data would be a trap. A `demo = true` in a config file is reported as an unknown
+    #: key rather than honoured.
+    demo: bool = False
     #: Path the config was loaded from, for `doctor` to report.
     source: Path | None = None
     #: Non-fatal problems found while loading, surfaced by `doctor`.

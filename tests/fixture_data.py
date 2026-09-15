@@ -1,6 +1,6 @@
 """Shared access to the captured probe payload.
 
-``tests/fixtures/squeue_payload.json`` is a real payload recorded from the Torch
+``lampter/demo_payload.json`` is a real payload recorded from the Torch
 cluster. Its contents change every time it is re-captured -- jobs finish, arrays
 advance, the queue shifts -- so tests must derive their expectations from the file
 rather than hard-coding counts, which would otherwise break on every refresh.
@@ -14,9 +14,11 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
+import lampter
 from lampter.models import Snapshot
 
-FIXTURE_PATH = Path(__file__).parent / "fixtures" / "squeue_payload.json"
+#: Shipped inside the package, because `lampter --demo` serves the same file.
+FIXTURE_PATH = Path(lampter.__file__).with_name("demo_payload.json")
 
 
 def payload() -> dict:

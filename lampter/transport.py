@@ -22,6 +22,7 @@ import time
 from collections.abc import Iterator
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Protocol
 
 from .remote_probe import (
     DEFAULT_SECTIONS,
@@ -56,6 +57,33 @@ class ProbeResult:
     def schema(self) -> int | None:
         value = self.payload.get("schema")
         return value if isinstance(value, int) else None
+
+
+class Transport(Protocol):
+    """What the dashboard needs from a data source.
+
+    Two things implement this: :class:`SSHTransport`, which runs the probe on the
+    cluster, and :class:`~lampter.demo.DemoTransport`, which serves a bundled payload.
+    The UI is written against this rather than against ``SSHTransport`` so that
+    ``--demo`` does not have to pretend it is talking to SSH -- and so that a demo which
+    took a different code path from the real thing would be a type error rather than a
+    silently different rendering.
+    """
+
+    def describe(self) -> str:
+        """A one-line summary of the source, for the status line."""
+
+    def fetch(self, sections: tuple[str, ...] | None = None) -> ProbeResult:
+        """Collect one snapshot."""
+
+    def stream_file(
+        self,
+        path: str,
+        *,
+        lines: int = 200,
+        follow: bool = True,
+    ) -> Iterator[str]:
+        """Yield a remote file's lines, optionally following it as it grows."""
 
 
 def _probe_source_path() -> Path:

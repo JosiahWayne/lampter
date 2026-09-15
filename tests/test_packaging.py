@@ -3,7 +3,7 @@
 The sdist is not a formality: it is what a downstream packager, a distro, or anyone on
 a platform without wheels actually builds from, and it is the only artifact that can
 run the test suite. It shipped once without ``tests/conftest.py``,
-``tests/fixture_data.py`` or ``tests/fixtures/squeue_payload.json`` -- setuptools'
+``tests/fixture_data.py`` or the captured payload -- setuptools'
 defaults sweep in ``tests/test*.py`` and nothing else -- so ``pytest`` from a released
 sdist died during collection. Worse, the missing ``conftest.py`` is also what redirects
 the history database to a temporary file, so a test run from that sdist would have
@@ -31,7 +31,6 @@ PYPROJECT = ROOT / "pyproject.toml"
 REQUIRED_IN_SDIST = (
     ("tests/conftest.py", "isolates the history database and makes the project importable"),
     ("tests/fixture_data.py", "every fixture-backed test module imports it"),
-    ("tests/fixtures/squeue_payload.json", "the captured payload the tests assert against"),
     ("lampter.toml.example", "the README tells the reader to copy it"),
     ("LICENSE", "a source distribution has to carry its licence"),
     ("README.md", "the long description"),
@@ -95,6 +94,18 @@ def test_the_pep561_marker_is_shipped():
     assert "Typing :: Typed" in settings["project"]["classifiers"]
     packaged = settings["tool"]["setuptools"]["package-data"]["lampter"]
     assert "py.typed" in packaged, "the marker exists but would not be installed"
+
+
+def test_the_demo_dataset_ships_in_the_wheel():
+    """`lampter --demo` has to work from an installed wheel, where there is no checkout.
+
+    The payload used to live under ``tests/``, which setuptools never packages, so a
+    demo that read it would have worked for the author and failed for everybody else.
+    """
+    settings = tomllib.loads(PYPROJECT.read_text(encoding="utf-8"))
+    packaged = settings["tool"]["setuptools"]["package-data"]["lampter"]
+    assert "demo_payload.json" in packaged, "--demo would break outside a checkout"
+    assert (ROOT / "lampter" / "demo_payload.json").exists()
 
 
 def test_the_version_is_declared_in_exactly_one_place():

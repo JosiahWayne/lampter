@@ -4,8 +4,30 @@ Notable changes, newest first. This project follows [semantic versioning](https:
 
 ## [Unreleased]
 
+### Scope
+
+* **The project is now stated as what it is: a tool for NYU's Torch cluster.** The README
+  previously claimed it "works with any Slurm 23.11+ controller", which was not supported
+  by anything. Only Torch (Slurm 25.05) has ever been run, the idle-GPU thresholds are
+  Torch's published policy compiled into the source, the default host is `torch`, and the
+  JSON schemas the probe parses are versioned and unchecked. There is now a
+  "What is Torch-specific" section listing every such assumption, so a different cluster
+  gets a documented answer rather than a wrong one.
+
 ### Added
 
+* **`lampter --demo`: the whole dashboard from bundled sample data.** No SSH, no config
+  file, nothing to set up, nothing written to disk. It is the same app, renderer and
+  polling code with `DemoTransport` in place of `SSHTransport`, so it doubles as the way
+  the README screenshots are generated — by `scripts/screenshots.py`, at a fixed size,
+  rather than captured by hand. The dataset is the anonymised capture the tests already
+  use, moved into the package as `lampter/demo_payload.json` (it now ships, so it needs
+  to stay anonymised), with illustrative utilisation figures and accounts/QOS sections
+  added, and rebased onto the current clock on every run so queue waits and time limits
+  read as live. Demo mode deliberately keeps no history: sample jobs raising "queued for
+  22h" alerts in the middle of real ones would be worse than useless.
+* **Screenshots in the README**, generated from the demo dataset, referenced by absolute
+  URL so they render on PyPI as well as GitHub.
 * **GPU utilisation in the jobs view.** The `GPU` column became `GPU UTIL`: the GPU count
   plus the mean utilisation of one GPU, coloured against Torch's published idle-GPU
   cancellation thresholds (`gh*` 60%, `gl*`/`ga*`/`gr*` 50%, otherwise 10%), which are

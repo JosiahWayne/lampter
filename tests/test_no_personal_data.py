@@ -1,6 +1,6 @@
 """A guard against committing personal identifiers.
 
-``tests/fixtures/squeue_payload.json`` is real cluster output, and the tests, README and
+``lampter/demo_payload.json`` is real cluster output, and the tests, README and
 docstrings quote it. Re-capturing it is a routine maintenance task, and it is easy to
 do without noticing that the payload carries the site's account names, the user's login
 and their project's directory layout. This module fails loudly when that happens, so a
@@ -24,8 +24,13 @@ from pathlib import Path
 
 import pytest
 
+import lampter
+
 ROOT = Path(__file__).resolve().parent.parent
-FIXTURE = ROOT / "tests" / "fixtures" / "squeue_payload.json"
+#: The captured payload ships inside the package: `lampter --demo` serves it, so it is
+#: now a *published artifact* rather than a test-only one. That raises the stakes on
+#: this module rather than lowering them.
+FIXTURE = Path(lampter.__file__).with_name("demo_payload.json")
 
 #: The neutral placeholders the fixture is expected to use. A cluster has both a home
 #: and a scratch filesystem, and the fixture legitimately references both.
@@ -77,7 +82,20 @@ FORBIDDEN_PATTERNS = (
 #: Files that legitimately contain the patterns above, because they define them.
 SELF = Path(__file__).resolve()
 
-SCANNED_SUFFIXES = (".py", ".md", ".json", ".toml", ".example", ".txt", ".cfg", ".yml", ".yaml")
+#: ``.svg`` is here because the README screenshots are generated from the demo dataset
+#: and committed as text: whatever the capture contains ends up in them verbatim.
+SCANNED_SUFFIXES = (
+    ".py",
+    ".md",
+    ".json",
+    ".toml",
+    ".example",
+    ".txt",
+    ".cfg",
+    ".yml",
+    ".yaml",
+    ".svg",
+)
 SKIPPED_DIRECTORIES = {".git", ".venv", ".uv-cache", "__pycache__", ".pytest_cache", ".ruff_cache"}
 
 
@@ -174,7 +192,7 @@ def test_the_scan_actually_covers_the_tree():
     """Guard against the guard silently scanning nothing."""
     files = committed_files()
     names = {path.name for path in files}
-    assert "squeue_payload.json" in names
+    assert "demo_payload.json" in names
     assert "README.md" in names
     assert "remote_probe.py" in names
     assert len(files) > 20

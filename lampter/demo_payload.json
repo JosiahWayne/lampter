@@ -1,4 +1,47 @@
 {
+ "accounts": [
+  {
+   "account": "acct_alpha",
+   "budget_configured": false,
+   "effectv_usage": 0.945,
+   "fairshare": 0.131,
+   "level_fs": 0.42,
+   "norm_shares": 0.125,
+   "qos": [
+    "gpu168",
+    "cpu168"
+   ],
+   "running_cpus": 36,
+   "running_gpus": 4,
+   "running_jobs": 5,
+   "running_nodes": 5,
+   "running_users": 1,
+   "window_cpu_hours": 2210.0,
+   "window_days": 7,
+   "window_gpu_hours": 480.5,
+   "window_jobs": 63
+  },
+  {
+   "account": "acct_beta",
+   "budget_configured": false,
+   "effectv_usage": 2.14,
+   "fairshare": 0.069,
+   "level_fs": null,
+   "norm_shares": 0.25,
+   "qos": [
+    "gpu168"
+   ],
+   "running_cpus": 0,
+   "running_gpus": 0,
+   "running_jobs": 0,
+   "running_nodes": 0,
+   "running_users": 0,
+   "window_cpu_hours": 512.5,
+   "window_days": 7,
+   "window_gpu_hours": 96.0,
+   "window_jobs": 11
+  }
+ ],
  "errors": [],
  "generated_at": 1789117752,
  "generated_at_iso": "2026-09-11T05:09:12-0400",
@@ -2001,12 +2044,49 @@
    "nodes_total": 6
   }
  ],
+ "qos": [
+  {
+   "group_cpu_limit": null,
+   "group_gpu_limit": 48,
+   "group_memory_limit_mb": null,
+   "max_wall": "7-00:00:00",
+   "my_cpus": 32,
+   "my_gpus": 4,
+   "my_jobs": 4,
+   "name": "gpu168",
+   "running_cpus": 32,
+   "running_gpus": 4,
+   "running_jobs": 4,
+   "running_users": 1,
+   "user_cpu_limit": null,
+   "user_gpu_limit": 4,
+   "user_memory_limit_mb": null
+  },
+  {
+   "group_cpu_limit": null,
+   "group_gpu_limit": null,
+   "group_memory_limit_mb": null,
+   "max_wall": "7-00:00:00",
+   "my_cpus": 4,
+   "my_gpus": 0,
+   "my_jobs": 1,
+   "name": "cpu168",
+   "running_cpus": 4,
+   "running_gpus": 0,
+   "running_jobs": 1,
+   "running_users": 1,
+   "user_cpu_limit": null,
+   "user_gpu_limit": null,
+   "user_memory_limit_mb": null
+  }
+ ],
  "schema": 4,
  "sections": [
   "jobs",
   "partitions",
   "history",
-  "usage"
+  "usage",
+  "accounts"
  ],
  "slurm_version": "25.05.4",
  "timings_ms": {
@@ -2029,6 +2109,8 @@
    "cpu_seconds": 2740,
    "disk_read_bytes": 1499598710784,
    "disk_write_bytes": 271278313472,
+   "gpu_memory_mb": 71000,
+   "gpu_util": 91,
    "job_id": 17365703,
    "max_rss_kb": 40065452,
    "steps": 2,
@@ -2038,6 +2120,8 @@
    "cpu_seconds": 2048,
    "disk_read_bytes": 1498705626112,
    "disk_write_bytes": 270384449536,
+   "gpu_memory_mb": 68500,
+   "gpu_util": 76,
    "job_id": 17365965,
    "max_rss_kb": 40098812,
    "steps": 2,
@@ -2047,6 +2131,8 @@
    "cpu_seconds": 1113,
    "disk_read_bytes": 959908195328,
    "disk_write_bytes": 19839048704,
+   "gpu_memory_mb": 74200,
+   "gpu_util": 63,
    "job_id": 17366086,
    "max_rss_kb": 40062208,
    "steps": 2,
@@ -2056,6 +2142,8 @@
    "cpu_seconds": 177,
    "disk_read_bytes": 470424998912,
    "disk_write_bytes": 19835356160,
+   "gpu_memory_mb": 22400,
+   "gpu_util": 9,
    "job_id": 17366224,
    "max_rss_kb": 40045860,
    "steps": 2,

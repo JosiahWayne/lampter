@@ -11,6 +11,7 @@ from typing import NamedTuple
 
 from . import __version__
 from .config import Config, load_config
+from .demo import DemoTransport
 from .duration import format_epoch, format_time_limit
 from .models import (
     SORT_MODES,
@@ -56,7 +57,10 @@ def opt(args: argparse.Namespace, name: str, default=None):
     return getattr(args, name, default)
 
 
-def make_transport(config: Config) -> SSHTransport:
+def make_transport(config: Config) -> SSHTransport | DemoTransport:
+    """The data source for this run: the bundled dataset, or the cluster over SSH."""
+    if config.demo:
+        return DemoTransport()
     return SSHTransport(
         config.host,
         user=config.user,
@@ -74,7 +78,15 @@ def make_store(config: Config) -> HistoryStore | None:
 
     A broken or unreadable database must not take the whole monitor down with it, so
     the failure is reported and the caller carries on with live data and no alerts.
+
+    Demo mode never opens one. The sample dataset is rebased onto the current clock on
+    every run, so recording it would raise alerts about jobs that do not exist -- "queued
+    for 22h" -- in the middle of real ones, and would corrupt the queue-wait statistics
+    with fictions. `--demo` is therefore read-only, which also makes it safe to run on a
+    machine that has never seen this cluster.
     """
+    if config.demo:
+        return None
     if not config.history_enabled:
         return None
     try:
@@ -779,7 +791,10 @@ def cmd_alerts(args: argparse.Namespace, config: Config) -> int:
     limit = opt(args, "limit", 50)
     store = make_store(config)
     if store is None:
-        print("error: history is disabled, so no alerts have been recorded", file=sys.stderr)
+        # Demo mode has no store by design, and saying "history is disabled" there would
+        # send the reader looking for a setting that is not the cause.
+        reason = "demo mode keeps no history" if config.demo else "history is disabled"
+        print(f"error: {reason}, so no alerts have been recorded", file=sys.stderr)
         return EXIT_FAILURE
     try:
         alerts = store.recent_alerts(limit)
@@ -824,16 +839,26 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
     from rich.console import Console
 
     console = Console()
+    demo = config.demo
     console.print("[bold]lampter doctor[/bold]")
 
     console.print(f"  client version     {__version__}")
     console.print(f"  config file        {config.source or '(none found, using defaults)'}")
-    console.print(f"  ssh host           {config.host}")
-    console.print(f"  ssh user           {config.user or '(from ~/.ssh/config)'}")
-    console.print(f"  ssh binary         {config.ssh_binary}")
-    console.print(f"  batch mode         {config.batch_mode}")
-    console.print(f"  connect timeout    {config.connect_timeout}s")
-    console.print(f"  command timeout    {config.command_timeout}s")
+    if demo:
+        # The connection settings below are not merely unused, they are about to be
+        # ignored, and printing them as if they were the live configuration is exactly
+        # the confusion `--demo` has to avoid.
+        console.print(
+            "  data source        [bold]demo[/bold] (bundled sample data: no SSH, "
+            "no config, nothing read from a cluster)"
+        )
+    else:
+        console.print(f"  ssh host           {config.host}")
+        console.print(f"  ssh user           {config.user or '(from ~/.ssh/config)'}")
+        console.print(f"  ssh binary         {config.ssh_binary}")
+        console.print(f"  batch mode         {config.batch_mode}")
+        console.print(f"  connect timeout    {config.connect_timeout}s")
+        console.print(f"  command timeout    {config.command_timeout}s")
     console.print(f"  refresh interval   {config.refresh_interval}s (jobs)")
     console.print(f"  capacity interval  {config.partition_interval}s (sinfo)")
     console.print(f"  history interval   {config.history_interval}s (sacct)")
@@ -841,7 +866,9 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
     console.print(f"  accounts interval  {config.accounts_interval}s (sacctmgr/sshare)")
     console.print(f"  accounting window  {config.account_days}d")
     console.print(f"  history window     {config.history_hours}h")
-    if not config.history_enabled:
+    if demo:
+        console.print("  local history      none: demo mode writes nothing")
+    elif not config.history_enabled:
         console.print("  local history      disabled (no alerts, no history view)")
     else:
         store = None
@@ -866,7 +893,8 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
         console.print(f"  [yellow]config warning   {warning}[/yellow]")
 
     transport = make_transport(config)
-    console.print("\n[bold]running probe…[/bold]")
+    heading = "loading sample data…" if demo else "running probe…"
+    console.print(f"\n[bold]{heading}[/bold]")
     try:
         result = transport.fetch()
     except TransportError as exc:
@@ -878,9 +906,11 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
         return EXIT_FAILURE
 
     payload = result.payload
+    # In demo mode these describe the *sample*, not a login node anyone reached, so they
+    # must not be labelled as if a connection had just been made.
     console.print(f"  [green]ok[/green] round trip {result.elapsed_sec:.2f}s")
-    console.print(f"  remote host        {payload.get('hostname')}")
-    console.print(f"  remote user        {payload.get('user')}")
+    console.print(f"  {'sample' if demo else 'remote'} host        {payload.get('hostname')}")
+    console.print(f"  {'sample' if demo else 'remote'} user        {payload.get('user')}")
     console.print(f"  slurm version      {payload.get('slurm_version') or 'unknown'}")
     console.print(f"  probe schema       {payload.get('schema')}")
     console.print(f"  probe timings      {payload.get('timings_ms')}")
@@ -894,7 +924,7 @@ def cmd_doctor(args: argparse.Namespace, config: Config) -> int:
     else:
         console.print("\n[green]no probe errors[/green]")
 
-    if not payload.get("slurm_version"):
+    if not payload.get("slurm_version") and not demo:
         console.print(
             "[yellow]note: could not read the Slurm version; `sinfo` may not be on "
             "the login node's PATH.[/yellow]"
@@ -952,6 +982,12 @@ def add_common_flags(parser: argparse.ArgumentParser) -> None:
         "--host",
         default=argparse.SUPPRESS,
         help="SSH host or ~/.ssh/config alias (default: torch)",
+    )
+    parser.add_argument(
+        "--demo",
+        action="store_true",
+        default=argparse.SUPPRESS,
+        help="render from bundled sample data: no SSH, no config, nothing to set up",
     )
     parser.add_argument(
         "--user",
@@ -1039,9 +1075,10 @@ def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
         prog="lampter",
         description=(
-            "A terminal dashboard for your SLURM jobs on a remote cluster, pulling data "
-            "over SSH from your own machine. Works with any Slurm 23.11+ controller; "
-            "developed against NYU's Torch cluster, which is the default host."
+            "A terminal dashboard for your SLURM jobs on NYU's Torch cluster, pulling "
+            "data over SSH from your own machine. Torch is the default host and the "
+            "only cluster this has been run against; see the README for what is "
+            "Torch-specific."
         ),
         formatter_class=argparse.RawDescriptionHelpFormatter,
         parents=[common],
@@ -1195,6 +1232,10 @@ def main(argv: list[str] | None = None) -> int:
             "history_enabled": False if opt(args, "no_history") else None,
         },
     )
+    # Set after loading rather than through `overrides`, so that `--demo` cannot arrive
+    # from a config file or the environment: a dataset that quietly shadows the real
+    # cluster would be the worst possible failure mode for a monitor.
+    config.demo = opt(args, "demo", False)
 
     command = opt(args, "command") or "tui"
     try:

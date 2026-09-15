@@ -15,6 +15,9 @@ include lampter.toml.example
 
 recursive-include tests *.py *.json
 recursive-include .github *.yml
+# The screenshots are referenced from the README, so a source release should be able to
+# render its own documentation offline.
+recursive-include docs *.png *.svg
 
 # Nothing generated, and nothing from a local run.
 global-exclude *.py[cod] .DS_Store

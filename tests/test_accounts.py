@@ -16,7 +16,7 @@ import json
 import os
 
 import pytest
-from fixture_data import snapshot as fixture_snapshot
+from fixture_data import payload as fixture_payload
 
 from lampter import remote_probe as rp
 from lampter.models import AccountUsage, QosPressure, Snapshot
@@ -446,9 +446,20 @@ def test_account_and_qos_column_sets_agree_on_keys():
         assert column.key in qos_cells, column.key
 
 
-def test_real_fixture_has_no_accounts_but_still_parses():
-    """The captured fixture predates this section; the model must not care."""
-    snapshot = fixture_snapshot()
+def test_a_payload_without_an_accounts_section_still_parses():
+    """A payload with no accounts section must stay usable.
+
+    The captured fixture predated this section for a long time and the demo dataset now
+    carries accounts, so the absent case is built by hand. It still matters: a payload
+    from an older probe, or from a refresh that only asked for `jobs`, arrives without
+    it.
+    """
+    raw = fixture_payload()
+    raw.pop("accounts", None)
+    raw.pop("qos", None)
+    raw["sections"] = [name for name in raw["sections"] if name != "accounts"]
+
+    snapshot = Snapshot.from_payload(raw, fetched_at=0.0)
     assert snapshot.accounts == ()
     assert snapshot.qos_pressure == ()
     assert snapshot.blocking_qos() == []

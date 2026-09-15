@@ -16,7 +16,7 @@ from textual.binding import Binding
 from textual.screen import Screen
 from textual.widgets import Footer, Header, RichLog
 
-from ..transport import SSHTransport, TransportError
+from ..transport import Transport, TransportError
 
 
 class LogScreen(Screen[None]):
@@ -30,7 +30,7 @@ class LogScreen(Screen[None]):
 
     def __init__(
         self,
-        transport: SSHTransport,
+        transport: Transport,
         path: str,
         *,
         header: str = "",

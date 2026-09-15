@@ -11,12 +11,12 @@ import asyncio
 import json
 import threading
 import time
-from pathlib import Path
 
 import pytest
 
 pytest.importorskip("textual")
 
+from fixture_data import FIXTURE_PATH
 from textual.widgets import DataTable, Static
 
 from lampter.render import COMPACT_LAYOUT, WIDE_LAYOUT, WIDE_LAYOUT_MIN_WIDTH
@@ -24,7 +24,7 @@ from lampter.store import HistoryStore, StoreError
 from lampter.transport import ProbeResult, TransportError
 from lampter.ui import SlurmMonitorApp
 
-FIXTURE = Path(__file__).parent / "fixtures" / "squeue_payload.json"
+FIXTURE = FIXTURE_PATH
 
 
 def expected_row_count() -> int:

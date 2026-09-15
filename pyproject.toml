@@ -7,7 +7,7 @@ name = "lampter"
 version = "0.1.0"
 # Named for Dionysus Lampter, the torch-bearer, whose festival at Pellene was a
 # torchlit procession (Pausanias 7.27.3). See the README for why the name fits.
-description = "A terminal dashboard for your SLURM jobs on a remote cluster."
+description = "A terminal dashboard for your SLURM jobs on NYU's Torch cluster."
 readme = "README.md"
 requires-python = ">=3.11"
 license = "MIT"
@@ -51,8 +51,10 @@ lampter = "lampter.cli:main"
 
 [tool.setuptools.package-data]
 # The PEP 561 marker, so the `Typing :: Typed` classifier above is true rather than
-# aspirational: without it type checkers ignore every inline annotation.
-lampter = ["py.typed"]
+# aspirational: without it type checkers ignore every inline annotation. The demo
+# payload rides along so `lampter --demo` works from a wheel, where `tests/` does not
+# exist.
+lampter = ["py.typed", "demo_payload.json"]
 
 [project.urls]
 Homepage = "https://github.com/JosiahWayne/lampter"

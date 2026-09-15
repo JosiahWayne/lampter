@@ -1,8 +1,12 @@
 # lampter
 
-A terminal dashboard for watching **your** SLURM jobs on a remote HPC cluster, running
-locally on your own machine and pulling data over SSH. It works with any Slurm 23.11+
-controller; it was developed against **NYU's Torch cluster**, which is the default host.
+A terminal dashboard for watching **your** SLURM jobs on **NYU's Torch cluster**, running
+locally on your own machine and pulling data over SSH.
+
+> **Scope.** This is a Torch tool, not a general SLURM client. Torch is the default host
+> and the only controller it has ever been run against (Slurm 25.05), and several parts
+> are deliberately specific to it. [What is Torch-specific](#what-is-torch-specific) is
+> listed below, so nothing about that is a surprise.
 
 > **The name.** Dionysus *Lampter* (Λαμπτήρ, "torch-bearer") was honoured at Pellene with
 > the *Lampteria*, a torchlit night procession (Pausanias 7.27.3). A torch that lights
@@ -29,46 +33,86 @@ It answers six questions and stays out of the way:
    submit to, what each has consumed, and the per-user and per-QOS GPU caps that
    decide whether a job will be refused outright.
 
-```
-torch · slurm 25.05.4  │  5 running · 5 pending  │  longest wait 16h38m  │  updated 0s ago (probe 0.96s)  │  auto 15s · next 12s  │  sort wait ↑
-┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
-┃JOBID              ┃ NAME                ┃ STATE     ┃ ACCOUNT      ┃ PARTITION     ┃ GPU UTIL  ┃ WAIT     ┃ REASON               ┃
-┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
-│17325640_46        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 78%     │ 16h35m   │ -                    │
-│17325640_45        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 62%     │ 16h19m   │ -                    │
-│17325640_44        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 6%      │ 16h04m   │ -                    │
-│17325640_43        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 ?       │ 15h52m   │ -                    │
-│17192918           │ wrap                │ RUNNING   │ acct_alpha   │ cl            │ -         │ 2s       │ -                    │
-│17325640_[47-95%4] │ train_gen           │ PENDING   │ acct_alpha   │ h100_tandon   │ 1         │ 16h38m   │ JobArrayTaskLimit    │
-│17325642           │ train_hook          │ PENDING   │ acct_alpha   │ cpu_short     │ -         │ 16h38m   │ Dependency           │
-│17325641           │ train_score         │ PENDING   │ acct_alpha   │ h100_tandon   │ 1         │ 16h38m   │ Dependency           │
-│17365257           │ eval_stats          │ PENDING   │ acct_beta    │ h100_tandon   │ 1         │ 1h17m    │ QOSGrpGRES           │
-│17365495           │ eval_repro          │ PENDING   │ acct_beta    │ h100_tandon   │ 2         │ 1h00m    │ Dependency           │
-└───────────────────┴─────────────────────┴───────────┴──────────────┴───────────────┴───────────┴──────────┴──────────────────────┘
-```
+![lampter's jobs view: a table of the user's SLURM jobs with account, partition, GPU
+utilisation, memory, queue wait and a plain-English reason for each pending
+job](https://raw.githubusercontent.com/JosiahWayne/lampter/main/docs/screenshots/jobs.png)
+
+*(Every image here is generated from the bundled sample data by
+`python scripts/screenshots.py` — see [`--demo`](#trying-it-without-a-cluster). No
+screenshot in this README was captured by hand, so none of them can drift from the
+code.)*
 
 The `GPU UTIL` column is the mean utilisation of one GPU, coloured against Torch's
-published idle-GPU policy — `1 6%` is a job about to be cancelled, `1 62%` is one on the
-warning line, and `1 ?` means a measurement came back that cannot honestly be turned into
-a percentage. [What it can and cannot tell you is set out in full below](#how-accurate-is-the-gpu-util-column).
+published idle-GPU policy — a low figure is a job about to be cancelled, a middling one
+is on the warning line, and `?` means a measurement came back that cannot honestly be
+turned into a percentage. [What it can and cannot tell you is set out in full
+below](#how-accurate-is-the-gpu-util-column).
+
 
 ## Install
 
-Requires Python 3.11+. Nothing needs to be installed on the cluster.
+Requires Python 3.11+ locally. Nothing needs to be *installed* on the cluster: the probe
+is a single standard-library script piped over stdin, so the login node only needs a
+`python3` and the usual SLURM commands on its `PATH`.
 
 ```bash
-cd ~/lampter
+# From PyPI, as a tool (recommended: keeps the TUI in its own environment)
+pipx install 'lampter[tui]'
 
-# Option A: use the prepared virtualenv
-.venv/bin/lampter
+# ...or into the current environment
+pip install 'lampter[tui]'
 
-# Option B: install it (the TUI extra pulls in Textual)
-python3 -m pip install -e '.[tui]'
+# ...or from a checkout
+git clone https://github.com/JosiahWayne/lampter && cd lampter
+pip install -e '.[tui]'
 ```
 
 `rich` is the only hard dependency, because the one-shot `status` view uses it.
 `textual` is needed only for the interactive dashboard, so a headless machine can
-install the package without a TUI framework.
+install the package without a TUI framework — and if you forget, `lampter` says so and
+tells you the extra to install.
+
+### Before you point it at Torch
+
+Two things have to be true, and `lampter doctor` will tell you which one is not:
+
+1. **SSH works non-interactively.** The tool runs `ssh <host> python3 -` with
+   `BatchMode=yes` by default, so it fails fast rather than hanging on a password
+   prompt. A key or an agent is expected, and a host alias in `~/.ssh/config` is the
+   usual way to name it.
+2. **The login node has the SLURM commands** — `squeue`, `sinfo`, `sacct`, `sstat`, and
+   for the accounts view `sshare` and `sacctmgr`.
+
+`host = "torch"` is the default, so `~/.ssh/config` needs an entry by that name (or pass
+`--host`). Nothing is written to the cluster.
+
+## Trying it without a cluster
+
+```bash
+lampter --demo
+```
+
+`--demo` renders every view from a bundled sample dataset instead of SSH: no host, no
+config file, nothing to set up, and nothing written to disk. It is the same application,
+renderer and polling code with a different data source, so it is also the fastest way to
+see what the tool does before trusting it with a connection — and it is what the
+screenshots in this README are generated from.
+
+The dataset is an anonymised capture from Torch (`lampter/demo_payload.json`, checked by
+the test suite so it stays anonymised) with illustrative utilisation figures added, since
+the capture predates that column. It is rebased onto the current clock each run, so the
+queue waits and time limits read as live rather than as a snapshot from whenever the file
+was last updated.
+
+Demo mode never opens the history database, so it raises no alerts and leaves your real
+history alone. The log view is the one thing it cannot fake, and it says so.
+
+To regenerate the screenshots after a UI change:
+
+```bash
+python scripts/screenshots.py     # writes docs/screenshots/*.svg and *.png
+```
+
 
 ## Usage
 
@@ -83,8 +127,9 @@ lampter accounts            # my accounts, their usage, and QOS headroom
 lampter accounts --qos      # just the QOS caps that refuse a job
 lampter alerts              # everything that has gone wrong, newest first
 lampter logs 17325640_42    # last 200 lines of a job's output
-lampter logs train -f         # ...and follow it (Ctrl-C to stop)
+lampter logs train -f       # ...and follow it (Ctrl-C to stop)
 lampter doctor              # diagnose the SSH connection end to end
+lampter --demo              # every view, from bundled sample data, no SSH
 ```
 
 Useful flags:
@@ -111,6 +156,7 @@ Useful flags:
 | `--stderr` | read the stderr file instead of stdout (`logs`) |
 | `--path FILE` | read a remote file directly, bypassing the job lookup (`logs`) |
 | `--no-batch-mode` | let ssh prompt for a password instead of failing fast |
+| `--demo` | render from bundled sample data: no SSH, no config, nothing to set up |
 
 ### Keys in the dashboard
 
@@ -284,10 +330,13 @@ h200 as "48 GPUs" and the correct "272 GPUs, 255 in use" — which is why there 
 test asserting it, and why the naive number was checked against
 `scontrol show nodes` before being trusted.
 
+![lampter's capacity view: free GPUs, CPUs and memory per partition, with the GPUs the
+user's own running jobs hold shown next to them](https://raw.githubusercontent.com/JosiahWayne/lampter/main/docs/screenshots/capacity.png)
+
 Note also that Torch's partitions **overlap**: the project partitions
 (`h200_tandon`, `h200_public`, ...) point at the same hardware, and `all` pools
-everything. There is deliberately no cluster-wide total anywhere in this tool,
-because summing the rows would count the same GPUs several times.
+everything. There is deliberately no cluster-wide *capacity* total anywhere in this
+tool, because summing the rows would count the same GPUs several times.
 
 ### Log tracking
 
@@ -427,6 +476,10 @@ VRAM while doing nothing, and the policy is about utilisation.
 consuming. Picking the metrics took some care, because the obvious candidates are
 misleading:
 
+![lampter's accounts view: per-account GPUs in use now, GPU-hours and CPU-hours consumed
+over a window, fairshare, effective usage, and a note explaining the queue
+priority](https://raw.githubusercontent.com/JosiahWayne/lampter/main/docs/screenshots/accounts.png)
+
 | Shown | Source | Why this and not something else |
 | --- | --- | --- |
 | `GPUS now` / `CPUS now` / `NODES` | `squeue -t RUNNING`, grouped by account | The only honest "in use right now" figure |
@@ -542,21 +595,30 @@ be tested locally in isolation.
 ## Tests
 
 ```bash
-.venv/bin/python -m pytest
+pytest              # 500+ tests, no network required, ~20 seconds
 ```
 
-415 tests, no network required:
+One rule shapes the rest: **the suite never contacts a cluster.** The transport is
+stubbed with a fake `ssh`, and `tests/conftest.py` redirects the history database to a
+temporary file so a run cannot write to the real one. That is also why the captured
+payload is exercised directly rather than re-fetched.
 
 * `test_models.py` — the queue-wait/run-time arithmetic, array-job naming, partition
-  properties, log-path expansion, staggered-section merging, sorting, plus regression
-  tests over a **real captured payload** in `tests/fixtures/squeue_payload.json`.
-* `test_store.py` — transitions, alert deduplication, failure detection from
-  `sacct`, threshold alerts, and queue-wait statistics.
-* `test_accounts.py` — both TRES spellings, the `%a`-is-the-account trap, the
-  filtered `sacctmgr` requirement, per-user versus group caps and their headroom,
-  and the accounts/QOS tables.
+  properties, log-path expansion, staggered-section merging and sorting, over the
+  captured payload in `lampter/demo_payload.json`.
 * `test_remote_probe.py` — the probe, driven end to end against a fake `squeue` on
-  `PATH`, including that a jobs-only poll never invokes `sinfo` or `sacct`.
+  `PATH`: that a jobs-only poll never invokes `sinfo` or `sacct`, and that the `sacct`
+  flattening survives a schema shift instead of taking the whole snapshot down with it.
+* `test_demo.py` — that `--demo` reaches no network, writes nothing to disk, keeps no
+  history, cannot be switched on from a config file, and that the time rebasing keeps
+  every gap between timestamps intact.
+* `test_gpu_util.py` — the idle-GPU thresholds per node family, the pooled-versus-
+  per-GPU arithmetic, and that `GPU UTIL` survives every layout tier.
+* `test_store.py` — transitions, alert deduplication, failure detection from `sacct`,
+  threshold alerts, and queue-wait statistics.
+* `test_accounts.py` — both TRES spellings, the `%a`-is-the-account trap, the filtered
+  `sacctmgr` requirement, per-user versus group caps and their headroom, and the
+  accounts/QOS tables.
 * `test_usage.py` — `sstat` size/CPU parsing, step aggregation (max not sum), the
   bogus-value filter, the numeric-job-id requirement, and that `sstat` is not invoked
   when nothing is running.
@@ -564,26 +626,69 @@ be tested locally in isolation.
   (ssh exit 255, garbage output, schema mismatch, timeout), using a fake `ssh`.
 * `test_logs.py` — path expansion, log streaming, that closing the stream stops the
   remote `tail`, job-reference resolution, and the log screen.
-* `test_ui.py` — the dashboard mounted for real through Textual's `run_test`
-  harness: rendering, view switching, the polling cadence, the manual refresh key,
-  interval clamping, cursor stability, error handling, alert surfacing and resize.
-* `test_cli.py` — subcommand routing, option position, JSON output, and that
-  one-shot commands record into the history database without duplicating
-  transitions.
-* `test_render.py`, `test_config.py`, `test_tres.py`, `test_duration.py` —
-  table rendering (including that no table exceeds the terminal width at any layout
+* `test_ui.py` — the dashboard mounted for real through Textual's `run_test` harness:
+  rendering, view switching, the polling cadence, the manual refresh key, interval
+  clamping, cursor stability, error handling, alert surfacing and resize.
+* `test_cli.py` — subcommand routing, option position, JSON output, and that one-shot
+  commands record into the history database without duplicating transitions.
+* `test_no_personal_data.py` — fails the build if the captured payload ever carries a
+  login, an account, a job name or a home directory again. It is now a *published*
+  artifact, so this matters more than it did.
+* `test_packaging.py` — reads `MANIFEST.in` and the packaging metadata directly, which is
+  the only place a missing sdist file is visible: the suite itself always runs from a
+  checkout, where every file is present by definition.
+* `test_render.py`, `test_config.py`, `test_tres.py`, `test_duration.py` — table
+  rendering (including that no table exceeds the terminal width at any layout
   threshold), configuration precedence, TRES parsing and formatting.
 
-Tests never touch the real cluster: the transport is stubbed with a fake `ssh`, and
-`tests/conftest.py` redirects the history database to a temporary file so a test run
-cannot write to your real one.
+## What is Torch-specific
+
+Stated plainly, because "it's just a SLURM client" would be misleading. Everything below
+is deliberate rather than incidental, and each one is somewhere a different cluster would
+get a wrong answer instead of an error.
+
+* **The idle-GPU thresholds are Torch's published policy, compiled in.** They are applied
+  to any node family the table does not recognise, via the `10%`/`50%` catch-all. They
+  are not configurable, on purpose: they describe one site's rule, and retuning them
+  would make the column mean something its own documentation does not say. The numbers
+  are quoted from the source in `lampter/gpu_policy.py`.
+* **Only Slurm 25.05 has ever been exercised.** The probe calls bare `squeue --json`,
+  `sinfo --json` and `sacct --json`, whose schemas are versioned and do change between
+  releases, and nothing compares the controller's version against anything. Older
+  controllers are untested, not "supported". 23.11 is the earliest release whose manuals
+  document `sinfo --json` and `sacct --json`, which is the whole basis for any version
+  claim — so there isn't one.
+* **The default host is `torch`**, an alias expected in `~/.ssh/config`, and the login is
+  expected to be non-interactive (`batch_mode`, on by default). Password-only access
+  fails immediately rather than prompting.
+* **`python3` is assumed on the login node.** The probe is a standard-library script piped
+  over stdin, so nothing needs *installing* there, but an interpreter does need to exist.
+* **Node names are assumed to begin with letters** (`gh`, `gl`, `ga`, `gr`), which is how
+  the GPU policy is matched. A site using `node[0001-0010]` or a suffix convention would
+  fall through to the catch-all.
+* **The accounts view reads cluster-wide.** It issues one unfiltered
+  `squeue -t RUNNING` and aggregates it per account and QOS. Usernames are collapsed to a
+  count and never displayed or stored, but on a site configured with `PrivateData=jobs`
+  that call returns only your own jobs, and the per-account figures would be quietly
+  wrong rather than absent.
+* **Absent Torch infrastructure is assumed.** There is no `GrpTRESMins` budget to show
+  (the field is empty on Torch, so the column is hidden), and no `gutil`/`jobstats`
+  helper exists, which is why GPU utilisation comes from `sstat` instead.
+
+Nothing is special-cased by partition or account name: the capacity view works from
+whatever `sinfo` reports, and account names are never truncated or pattern-matched. The
+Torch assumptions are the list above.
 
 ## Scope
 
 Everything in the original objective is implemented and verified against the live
 cluster: `squeue` job status, `sinfo` partition capacity, `sacct` history and alerts,
 `sstat` live resource use including GPU utilisation, and log tracking — with one SSH
-round trip per refresh and the user's existing `ControlMaster` connection reused.
+round trip per refresh and the connection reuse an existing `ControlMaster` gives you.
+
+`lampter --demo` renders the whole dashboard from a bundled, non-realtime payload, with
+no SSH and no configuration. It is what the screenshots above are made from, and it is
+the fastest way to see what the tool does before pointing it at anything.
 
 Natural next steps, none of them started:
 

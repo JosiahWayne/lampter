@@ -38,7 +38,7 @@ from ..render import (
     view_rows,
 )
 from ..store import HistoryStore, StoreError
-from ..transport import SSHTransport, TransportError
+from ..transport import Transport, TransportError
 from .logview import LogScreen
 
 #: Guards against a refresh interval so short that it becomes a self-inflicted
@@ -93,7 +93,7 @@ class SlurmMonitorApp(App[None]):
 
     def __init__(
         self,
-        transport: SSHTransport,
+        transport: Transport,
         *,
         interval: float = 15.0,
         auto: bool = True,

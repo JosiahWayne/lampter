@@ -1,21 +1,20 @@
 """Job metrics: the derived queue wait and run time, plus identity and sorting.
 
-The fixture in ``tests/fixtures/squeue_payload.json`` is a real (trimmed) probe
+The fixture in ``lampter/demo_payload.json`` is a real (trimmed) probe
 payload captured from the Torch cluster, so the regression test at the bottom
 pins behaviour against genuine controller output rather than my assumptions.
 """
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import pytest
+from fixture_data import FIXTURE_PATH
 from fixture_data import payload as fixture_payload
 from fixture_data import snapshot as fixture_snapshot
 
 from lampter.models import Job, Snapshot, sort_jobs
 
-FIXTURE = Path(__file__).parent / "fixtures" / "squeue_payload.json"
+FIXTURE = FIXTURE_PATH
 
 
 def wire(**overrides) -> dict:
