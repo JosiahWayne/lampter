@@ -11,16 +11,17 @@ controller; it was developed against **NYU's Torch cluster**, which is the defau
 
 It answers six questions and stays out of the way:
 
-1. **What are my jobs doing right now?** — state, **account**, partition, GPUs, live
-   memory, node, time limit, time left, and why a pending job is not running yet.
+1. **What are my jobs doing right now?** — state, **account**, partition, **GPU
+   utilisation**, live memory, node, time limit, time left, and why a pending job is not
+   running yet.
 2. **How long have they been waiting?** — the queue wait for every job, using the
    same definition whether the job is still pending or already running, so the
    column is comparable all the way down the table.
 3. **Where is there room to run something?** — free GPUs, CPUs and memory per
    partition, next to how many GPUs your own running jobs already hold there.
-4. **Are my running jobs healthy?** — peak memory from `sstat`, shown against the
-   memory each job asked for, so a job heading for an OOM kill is visible before it
-   dies.
+4. **Are my running jobs healthy?** — peak memory from `sstat` against the memory each
+   job asked for, so one heading for an OOM kill is visible before it dies, and GPU
+   utilisation against the site's idle-GPU policy, since an idle card costs you the job.
 5. **What changed while I was not looking?** — every refresh is recorded locally, so
    failures, completions and jobs that have been starving for hours are reported
    once each, instead of vanishing from `squeue` without a trace.
@@ -29,18 +30,27 @@ It answers six questions and stays out of the way:
    decide whether a job will be refused outright.
 
 ```
-torch · slurm 25.05.4  │  3 running · 5 pending  │  longest wait 16h02m  │  updated 0s ago (probe 0.96s)  │  auto 15s · next 12s  │  sort wait ↑
-┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━┓
-┃JOBID              ┃ NAME             ┃ STATE     ┃ GPU  ┃ WAIT     ┃ RUN       ┃ REASON          ┃
-┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━┩
-│17325640_43        │ train_gen      │ RUNNING   │ 1    │ 15h52m   │ 10m16s    │ -               │
-│17325640_42        │ train_gen      │ RUNNING   │ 1    │ 15h42m   │ 20m29s    │ -               │
-│17192918           │ wrap             │ RUNNING   │ -    │ 2s       │ 2d17h     │ -               │
-│17325640_[44-95%4] │ train_gen      │ PENDING   │ 1    │ 16h02m   │ -         │ Priority        │
-│17325642           │ train_hook     │ PENDING   │ -    │ 16h02m   │ -         │ Dependency      │
-│17365257           │ eval_stats       │ PENDING   │ 1    │ 41m45s   │ -         │ QOSMaxGRESPerUs…│
-└───────────────────┴──────────────────┴───────────┴──────┴──────────┴───────────┴─────────────────┘
+torch · slurm 25.05.4  │  5 running · 5 pending  │  longest wait 16h38m  │  updated 0s ago (probe 0.96s)  │  auto 15s · next 12s  │  sort wait ↑
+┏━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━━━━━┳━━━━━━━━━━━━━━━┳━━━━━━━━━━━┳━━━━━━━━━━┳━━━━━━━━━━━━━━━━━━━━━━┓
+┃JOBID              ┃ NAME                ┃ STATE     ┃ ACCOUNT      ┃ PARTITION     ┃ GPU UTIL  ┃ WAIT     ┃ REASON               ┃
+┡━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━━━━━╇━━━━━━━━━━━━━━━╇━━━━━━━━━━━╇━━━━━━━━━━╇━━━━━━━━━━━━━━━━━━━━━━┩
+│17325640_46        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 78%     │ 16h35m   │ -                    │
+│17325640_45        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 62%     │ 16h19m   │ -                    │
+│17325640_44        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 6%      │ 16h04m   │ -                    │
+│17325640_43        │ train_gen           │ RUNNING   │ acct_alpha   │ h100_tandon   │ 1 ?       │ 15h52m   │ -                    │
+│17192918           │ wrap                │ RUNNING   │ acct_alpha   │ cl            │ -         │ 2s       │ -                    │
+│17325640_[47-95%4] │ train_gen           │ PENDING   │ acct_alpha   │ h100_tandon   │ 1         │ 16h38m   │ JobArrayTaskLimit    │
+│17325642           │ train_hook          │ PENDING   │ acct_alpha   │ cpu_short     │ -         │ 16h38m   │ Dependency           │
+│17325641           │ train_score         │ PENDING   │ acct_alpha   │ h100_tandon   │ 1         │ 16h38m   │ Dependency           │
+│17365257           │ eval_stats          │ PENDING   │ acct_beta    │ h100_tandon   │ 1         │ 1h17m    │ QOSGrpGRES           │
+│17365495           │ eval_repro          │ PENDING   │ acct_beta    │ h100_tandon   │ 2         │ 1h00m    │ Dependency           │
+└───────────────────┴─────────────────────┴───────────┴──────────────┴───────────────┴───────────┴──────────┴──────────────────────┘
 ```
+
+The `GPU UTIL` column is the mean utilisation of one GPU, coloured against Torch's
+published idle-GPU policy — `1 6%` is a job about to be cancelled, `1 62%` is one on the
+warning line, and `1 ?` means a measurement came back that cannot honestly be turned into
+a percentage. [What it can and cannot tell you is set out in full below](#how-accurate-is-the-gpu-util-column).
 
 ## Install
 
@@ -312,6 +322,11 @@ next to the memory that job asked for: 40 GB means nothing until you know whethe
 request was 48 GB or 400 GB. Over 75% of the request the cell turns yellow; over 90%
 it turns red with a `!`, because Slurm kills a job that exceeds its `--mem`.
 
+The same invocation also carries the GPU figures, from `TRESUsageInAve`: `gres/gpuutil`
+behind the `GPU UTIL` column and `gres/gpumem` behind the `gpu_memory_mb` field in
+`--json`. The utilisation figure has enough caveats to need
+[its own section](#how-accurate-is-the-gpu-util-column).
+
 `sstat` is the least friendly of the four tools, and three of its quirks are
 correctness-bearing:
 
@@ -333,6 +348,78 @@ count. Measurements outside a plausible range are discarded rather than shown as
 fact, because the controller sometimes reports garbage — the `extern` step of one
 Torch array task claimed an `AveCPU` of `213503982334-14:25:51`, about 1.8×10¹⁶
 seconds.
+
+### How accurate is the `GPU UTIL` column?
+
+Torch cancels jobs whose GPUs sit idle and emails about it first, so the jobs view
+carries a `GPU UTIL` column: the GPU count plus the **mean utilisation of one GPU**,
+coloured against the published thresholds for that job's node family.
+
+| Nodes | Cancelled below | Warned below |
+| --- | --- | --- |
+| `gh*` (H100 / H200) | 60% | 75% |
+| `gl*` (L40S) | 50% | 70% |
+| `ga*` (A100) | 50% | 70% |
+| `gr*` (RTX 6000) | 50% | 70% |
+| anything else | 10% | 50% |
+
+Source: [NYU RTS docs](https://github.com/NYU-RTS/rts-docs), which adds "Enforcement will
+be very aggressive." A job spanning several node families is judged by the strictest one,
+because a single strict node is enough to lose the job.
+
+The number comes from `sstat`'s `TRESUsageInAve`, which carries `gres/gpuutil`. That
+figure is **pooled over the job's GPUs — a sum, not a mean**. Measured on Torch: 260
+samples from single-GPU jobs all landed in 0-100, while a two-GPU job pegged on both
+cards read exactly `200`. So the column divides by the GPU count and marks the result
+with `~` (`4 ~62%`) to say "this is a mean over four cards".
+
+It is the figure that decides whether you get an email, so it is worth being explicit
+about where it holds and where it does not.
+
+**Trustworthy**
+
+* **Single-GPU jobs.** The figure is that card's own average, and is directly comparable
+  with what the site measures: the emailed reports quote a per-job `AveUtil`, and for a
+  one-GPU job this is the same quantity.
+* **Steady load over hours.** Slurm's average and the site's window converge, so the two
+  agree.
+* **The extremes.** `~100%` and `~0%` are not subtle. A pegged job is not at risk under
+  any averaging, and an idle one is at risk under any reading.
+* **The count.** It is the allocation `squeue` reports, i.e. what you were granted, not
+  what you asked for.
+
+**Not trustworthy, or actively misleading**
+
+* **Multi-GPU jobs with uneven load — the one that matters.** A mean hides the idle card.
+  The site evaluates **each `GPUIdx` separately** and the *worst* GPU is what gets a job
+  cancelled, so eight cards with one idle reads `~87%` here while the site sees a card at
+  0%. The `~` is a warning, not decoration: if the GPUs are not doing the same work, this
+  column cannot see the one that matters.
+* **The divide-by-N rule is only verified for N ≤ 2.** `gres/gpuutil` is not documented
+  anywhere we could find, and its aggregation could differ across Slurm builds. Rather
+  than print a confident lie the column refuses: when dividing produces something
+  impossible (>100) it shows `4 ?` in yellow, meaning "measured, but the pooled-sum
+  assumption does not hold here". Treat `?` as no reading at all.
+* **Different averaging windows.** `sstat` averages over the job's life so far; the
+  site's reports quote roughly a two-hour window. A job that idled while loading data and
+  then got busy reads low here long after the site stopped looking — and the converse
+  holds too.
+* **Young and short jobs.** Early on, the average is mostly startup and says nothing. A
+  job shorter than one refresh interval may never get a reading.
+* **Multi-node jobs across families.** The strictest threshold is applied, which is
+  conservative, but a mean over cards on nodes with different policies has no single
+  correct answer. Treat the colour as a hint, not a ruling.
+* **Moments.** This is an average, so a thirty-second stall does not appear. No colour is
+  not proof of health.
+* **What the site will do.** The table above is transcribed from published documentation.
+  Whether, when and how enforcement fires is the site's decision. `lampter` can only say
+  what Slurm recorded and how it compares with the published lines.
+
+Two rendering details follow from the same reasoning. A GPU job with **no** measurement
+prints the bare count (`4`), never `0%`, because a missing number must not be made to look
+like an idle GPU; a job with no GPUs prints `-`. And `gres/gpumem` is collected and
+exported in `--json` but not shown: high GPU memory with low utilisation is a job holding
+VRAM while doing nothing, and the policy is about utilisation.
 
 ### Accounts, and choosing the metrics that actually mean something
 
@@ -410,7 +497,11 @@ tiers, chosen by terminal width and re-chosen on resize:
 | 125–214 | 8 | job, name, state, **account**, partition, GPU, wait, reason |
 | < 125 | 6 | no room for an account name; `WAIT` is kept |
 
-`WAIT` is present in all three: it is the number the tool exists to report.
+`WAIT` is present in all three: it is the number the tool exists to report. `GPU UTIL`
+survives all three as well, and it replaced the old bare GPU count rather than becoming a
+fifteenth column — a new column would have pushed both thresholds up again, and the
+idle-GPU figure is the one thing on screen that can cost you a job (see
+[above](#how-accurate-is-the-gpu-util-column)).
 
 The middle tier is narrower than it looks because **an account name may not be
 truncated**. `acct_alpha` and `acct_beta_advanced` differ
@@ -491,11 +582,15 @@ cannot write to your real one.
 
 Everything in the original objective is implemented and verified against the live
 cluster: `squeue` job status, `sinfo` partition capacity, `sacct` history and alerts,
-`sstat` live resource use, and log tracking — with one SSH round trip per refresh and
-the user's existing `ControlMaster` connection reused.
+`sstat` live resource use including GPU utilisation, and log tracking — with one SSH
+round trip per refresh and the user's existing `ControlMaster` connection reused.
 
 Natural next steps, none of them started:
 
+* per-GPU utilisation, which would remove the main caveat on the `GPU UTIL` column.
+  Slurm pools the figure and exposes no per-`GPUIdx` breakdown, so this needs
+  `srun --jobid=<id> --overlap nvidia-smi` inside your own allocation — an extra
+  remote command per job, which is why it is not the default.
 * a node-level view (which specific `gh` nodes are free, rather than per-partition
   counts)
 * alerting through a desktop notification or a file, so it works with the dashboard

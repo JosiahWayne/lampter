@@ -11,6 +11,7 @@ point of this module.
 
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field, replace
 
 from .tres import gpu_count, gpu_type, memory, memory_mb
@@ -306,6 +307,26 @@ class Job:
     @property
     def is_array(self) -> bool:
         return bool(self.array_job_id) or bool(self.array_task_string)
+
+    @property
+    def node_prefixes(self) -> tuple[str, ...]:
+        """Leading letters of each distinct node name this job is on.
+
+        A Slurm nodelist is compacted (``gh[105-112,114-124]``, ``gh002,gh003``), and a
+        job can span node families. Site policies key their thresholds on these prefixes
+        -- NYU's low-utilisation rule is written as ``gl*``/``gh*``/``ga*``/``gr*`` -- so
+        this is how the applicable thresholds are found.
+        """
+        if not self.nodelist:
+            return ()
+        found: list[str] = []
+        for token in re.split(r"[,\s]+", self.nodelist.strip()):
+            match = re.match(r"([A-Za-z]+)", token)
+            if match:
+                prefix = match.group(1).lower()
+                if prefix not in found:
+                    found.append(prefix)
+        return tuple(found)
 
     # ---------------------------------------------------------------- state
 
@@ -674,6 +695,12 @@ class Usage:
     tasks: int | None = None
     disk_read_bytes: int | None = None
     disk_write_bytes: int | None = None
+    #: ``gres/gpuutil`` as Slurm reports it, which is **pooled over the step's GPUs**
+    #: rather than per-GPU: a two-GPU job pegged on both reads as 200. Use
+    #: :meth:`per_gpu_util` to get a figure comparable with a percentage threshold.
+    gpu_util: int | None = None
+    #: ``gres/gpumem``, the memory the step held on its GPUs.
+    gpu_memory_mb: int | None = None
     #: How many steps contributed, i.e. how much of the job ``sstat`` could see.
     steps: int = 0
 
@@ -686,8 +713,28 @@ class Usage:
             tasks=_int_or_none(record.get("tasks")),
             disk_read_bytes=_int_or_none(record.get("disk_read_bytes")),
             disk_write_bytes=_int_or_none(record.get("disk_write_bytes")),
+            gpu_util=_int_or_none(record.get("gpu_util")),
+            gpu_memory_mb=_int_or_none(record.get("gpu_memory_mb")),
             steps=_int_or_none(record.get("steps")) or 0,
         )
+
+    def per_gpu_util(self, gpu_count: int | None) -> float | None:
+        """Mean utilisation of one GPU, or ``None`` when that cannot be derived honestly.
+
+        The raw value is pooled, so it is divided by the GPU count. That division is an
+        inference from a single multi-GPU observation (a two-GPU job reading 200 on
+        both), so it is treated as fallible: a result above 100% is impossible and is
+        reported as ``None`` rather than as a number. An obviously wrong figure would be
+        worse than no figure, because the whole point of the column is deciding whether
+        to trust it.
+
+        Callers that want to distinguish "no measurement" from "measurement we could not
+        interpret" can compare :attr:`gpu_util` with this.
+        """
+        if not gpu_count or self.gpu_util is None:
+            return None
+        per_gpu = self.gpu_util / gpu_count
+        return per_gpu if per_gpu <= 100 else None
 
     @property
     def max_rss_gb(self) -> float | None:

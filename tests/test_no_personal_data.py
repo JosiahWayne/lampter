@@ -43,6 +43,21 @@ NEUTRAL_ACCOUNTS = frozenset(
     }
 )
 
+#: Job names are the third thing a real capture leaks, alongside the login and the
+#: accounts: a name like ``<project>_<stage>`` describes unpublished work and identifies
+#: the project. Checked as a field against an allowlist rather than as a pattern, for the
+#: same reason as the other two -- see the module docstring.
+NEUTRAL_JOB_NAMES = frozenset(
+    {
+        "eval_repro",
+        "eval_stats",
+        "train_gen",
+        "train_hook",
+        "train_score",
+        "wrap",
+    }
+)
+
 #: Text that must not appear anywhere in the tree. Each pattern describes a category,
 #: never a specific person.
 FORBIDDEN_PATTERNS = (
@@ -98,6 +113,19 @@ def test_fixture_has_no_real_account_names(payload):
         for record in payload.get(section) or []:
             account = record.get("account")
             assert account in NEUTRAL_ACCOUNTS, f"{section} leaks an account: {account!r}"
+
+
+def test_fixture_has_no_real_job_names(payload):
+    """Job names leak the research, which is the reason this whole module exists.
+
+    A name also travels into the README as a copy-pasted example and into docstrings, so
+    the guard is on the fixture first and the tree second.
+    """
+    for section in ("jobs", "history"):
+        for record in payload.get(section) or []:
+            name = record.get("name")
+            assert name in NEUTRAL_JOB_NAMES, f"{section} leaks a job name: {name!r}"
+    assert NEUTRAL_JOB_NAMES, "an empty allowlist would make this test vacuously true"
 
 
 def test_fixture_paths_stay_under_a_neutral_home(payload):

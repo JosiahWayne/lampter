@@ -4,7 +4,22 @@ Notable changes, newest first. This project follows [semantic versioning](https:
 
 ## [Unreleased]
 
-Nothing yet.
+### Added
+
+* **GPU utilisation in the jobs view.** The `GPU` column became `GPU UTIL`: the GPU count
+  plus the mean utilisation of one GPU, coloured against Torch's published idle-GPU
+  cancellation thresholds (`gh*` 60%, `gl*`/`ga*`/`gr*` 50%, otherwise 10%), which are
+  per node family and take the strictest family when a job spans several. The figure is
+  Slurm's `gres/gpuutil`, which is **pooled across the job's GPUs**, so it is divided by
+  the GPU count and marked `~` when that mean hides more than one card. Where dividing
+  gives an impossible answer the cell shows `?` rather than a wrong percentage. A GPU job
+  with no measurement shows only its count, never `0%`. `--json` gained `gpu_util_raw`,
+  `gpu_util_per_gpu`, `gpu_util_verdict`, `gpu_util_policy`, `gpu_util_cancel_pct`,
+  `gpu_util_warn_pct` and `gpu_memory_mb`. The README documents exactly when the figure
+  can and cannot be trusted.
+* The local-history guard now checks job names in the captured fixture against an
+  allowlist, alongside the existing username and account checks: job names describe
+  unpublished work and travel into the README as copy-pasted examples.
 
 ## [0.1.0] — 2026-09-14
 

@@ -31,6 +31,7 @@ from .render import (
     build_partition_table,
     build_qos_table,
     build_table,
+    gpu_utilisation,
     summary_line,
 )
 from .store import HistoryStore, StoreError
@@ -92,6 +93,26 @@ def fetch_snapshot(config: Config) -> Snapshot:
     return Snapshot.from_payload(result.payload, time.time(), result.elapsed_sec)
 
 
+def gpu_to_dict(job: Job, usage: Usage | None) -> dict:
+    """The GPU utilisation figures and the idle-GPU policy they were judged against.
+
+    The raw value is included alongside the derived per-GPU one so a caller can see for
+    themselves whether the division makes sense -- that assumption is the weakest link
+    in the column (see the README).
+    """
+    per_gpu, policy = gpu_utilisation(job, usage)
+    return {
+        "gpu_count": job.gpu_count,
+        "gpu_util_raw": usage.gpu_util if usage else None,
+        "gpu_util_per_gpu": round(per_gpu, 2) if per_gpu is not None else None,
+        "gpu_util_verdict": policy.verdict(per_gpu),
+        "gpu_util_policy": policy.pattern,
+        "gpu_util_cancel_pct": policy.cancel_pct,
+        "gpu_util_warn_pct": policy.warn_pct,
+        "gpu_memory_mb": usage.gpu_memory_mb if usage else None,
+    }
+
+
 def job_to_dict(job: Job, now: float, usage: Usage | None = None) -> dict:
     """Flat, script-friendly representation used by ``status --json``.
 
@@ -121,6 +142,7 @@ def job_to_dict(job: Job, now: float, usage: Usage | None = None) -> dict:
         "memory_used_gb": (round(usage.max_rss_gb, 2) if usage and usage.max_rss_gb else None),
         "cpu_seconds": usage.cpu_seconds if usage else None,
         "usage_steps": usage.steps if usage else 0,
+        **gpu_to_dict(job, usage),
         "node_count": job.node_count,
         "nodelist": job.nodelist,
         "time_limit_min": job.time_limit_min,

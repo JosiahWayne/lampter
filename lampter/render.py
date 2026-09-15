@@ -29,6 +29,12 @@ from rich.table import Table
 from rich.text import Text
 
 from .duration import format_epoch, format_time_limit, humanize_seconds, progress_bar
+from .gpu_policy import (
+    VERDICT_CANCELLED,
+    VERDICT_WARNING,
+    GpuPolicy,
+    policy_for_prefixes,
+)
 from .models import (
     AccountUsage,
     Alert,
@@ -127,7 +133,7 @@ WIDE_LAYOUT: tuple[Column, ...] = (
     Column("account", "ACCOUNT", 27),
     Column("phase", "PHASE", 9),
     Column("partition", "PARTITION", 22, flex=True),
-    Column("gpu", "GPU", 4),
+    Column("gpu", "GPU UTIL", 9),
     Column("mem", "MEM", 8),
     Column("run", "RUN", 14),
     Column("wait", "WAIT", 10),
@@ -143,7 +149,7 @@ COMPACT_LAYOUT: tuple[Column, ...] = (
     Column("id", "JOBID", 18),
     Column("name", "NAME", 14, flex=True),
     Column("state", "STATE", 9),
-    Column("gpu", "GPU", 4),
+    Column("gpu", "GPU UTIL", 9),
     Column("wait", "WAIT", 8),
     Column("reason", "REASON", 16, flex=True),
 )
@@ -160,7 +166,7 @@ COMPACT_LAYOUT_WITH_ACCOUNT: tuple[Column, ...] = (
     Column("account", "ACCOUNT", 27),
     # PARTITION is as useful as ACCOUNT and cheap, so the middle tier carries it.
     Column("partition", "PARTITION", 13),
-    Column("gpu", "GPU", 4),
+    Column("gpu", "GPU UTIL", 9),
     Column("wait", "WAIT", 8),
     Column("reason", "REASON", 16, flex=True),
 )
@@ -233,6 +239,59 @@ def left_cell(job: Job, now: float) -> Text:
     return Text(label)
 
 
+def gpu_utilisation(job: Job, usage: Usage | None) -> tuple[float | None, GpuPolicy]:
+    """Per-GPU utilisation and the idle-GPU thresholds it should be judged against.
+
+    Returns ``(None, policy)`` whenever there is nothing trustworthy to show, which
+    covers three different situations the caller must not conflate:
+
+    * the job asked for no GPU at all;
+    * it has one but no measurement was collected;
+    * the measurement could not be interpreted (see :meth:`Usage.per_gpu_util`).
+
+    A job that has not started has no nodes, so its policy is the catch-all default
+    rather than anything node-specific.
+    """
+    policy = policy_for_prefixes(job.node_prefixes)
+    if usage is None or usage.per_gpu_util(job.gpu_count) is None:
+        return None, policy
+    return usage.per_gpu_util(job.gpu_count), policy
+
+
+def gpu_cell(job: Job, usage: Usage | None) -> Text:
+    """GPU count and mean utilisation, coloured against the site's idle-GPU policy.
+
+    This is the column that says "you are about to be emailed about this job": Torch
+    cancels a job whose GPUs average below a per-node-family threshold. It is an
+    indicator rather than a verdict, because the site judges *each GPU separately*
+    while Slurm pools the job's GPUs -- see the README.
+    """
+    count = job.gpu_count
+    if not count:
+        return Text("-", style="dim")
+
+    per_gpu, policy = gpu_utilisation(job, usage)
+    if per_gpu is None:
+        if usage is not None and usage.gpu_util is not None:
+            # A measurement exists but dividing it by the GPU count gave something
+            # impossible, so the pooled-vs-per-GPU assumption does not hold here.
+            return Text(f"{count} ?", style="bold yellow")
+        return Text(str(count))
+
+    verdict = policy.verdict(per_gpu)
+    style = {
+        VERDICT_CANCELLED: "bold red",
+        VERDICT_WARNING: "yellow",
+    }.get(verdict, "green")
+
+    cell = Text(f"{count} ")
+    # `~` marks a figure pooled across several GPUs: honest that it is a mean, and the
+    # reader needs to know a single idle GPU is hidden inside it.
+    cell.append("~" if count > 1 else "")
+    cell.append(f"{per_gpu:.0f}%", style=style)
+    return cell
+
+
 def format_memory_kb(kb: int | None) -> str:
     """Compact memory from a KB figure: ``4.3G``, ``640M``, ``512K``."""
     if kb is None:
@@ -271,19 +330,20 @@ def memory_cell(job: Job, usage: Usage | None) -> Text:
 def job_cell_map(
     job: Job,
     now: float,
-    with_bar: bool = True,
-    verbose_reason: bool = True,
+    *,
+    wide: bool = True,
     usage: Usage | None = None,
 ) -> dict[str, Text]:
     """Render one job as cells keyed by :class:`Column` key.
 
-    ``verbose_reason`` swaps the gloss for the raw Slurm reason code, which is far
-    shorter and therefore the right choice in the narrow layout. ``usage`` supplies
-    the live memory figure when one was collected.
+    ``wide`` selects the wide-layout extras: the limit bar, the glossed reason, and the
+    live memory figure. ``usage`` is always passed in, whatever the layout, because GPU
+    utilisation must not disappear in the narrow view -- withholding ``usage`` here once
+    made the whole column silently blank for anyone below the wide threshold.
     """
     phase = job.wait_phase(now)
     nodes = job.nodelist or (f"{job.node_count}n" if job.node_count else "-")
-    reason = (job.reason_text if verbose_reason else job.reason) or "-"
+    reason = (job.reason_text if wide else job.reason) or "-"
     return {
         "id": Text(job.display_id),
         "name": Text(job.name),
@@ -291,9 +351,9 @@ def job_cell_map(
         "account": Text(job.account or "-", style="dim" if not job.account else ""),
         "phase": Text(phase, style=PHASE_STYLES.get(phase, "")),
         "partition": Text(job.partition),
-        "gpu": Text(job.gpu_label),
-        "mem": memory_cell(job, usage),
-        "run": run_cell(job, now, with_bar),
+        "gpu": gpu_cell(job, usage),
+        "mem": memory_cell(job, usage) if wide else Text("-", style="dim"),
+        "run": run_cell(job, now, with_bar=wide),
         "wait": wait_cell(job, now),
         "limit": Text(format_time_limit(job.time_limit_min, job.time_limit_infinite)),
         "left": left_cell(job, now),
@@ -314,9 +374,8 @@ def job_cells(
     reason and the live memory figure; the narrow one does not.
     """
     wide = layout is WIDE_LAYOUT
-    cells = job_cell_map(
-        job, now, with_bar=wide, verbose_reason=wide, usage=usage if wide else None
-    )
+    # `usage` goes in either way: MEM is a wide-only luxury, but GPU utilisation is not.
+    cells = job_cell_map(job, now, wide=wide, usage=usage)
     return [cells[column.key] for column in layout if column.key in cells]
 
 

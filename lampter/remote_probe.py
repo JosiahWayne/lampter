@@ -73,7 +73,13 @@ RUNNING_STATES = frozenset(
 
 #: `sstat` fields to request. Kept to the ones with a clear meaning and a stable
 #: format; the full default set is dozens of columns wide.
-SSTAT_FIELDS = "JobID,MaxRSS,AveCPU,NTasks,MaxDiskRead,MaxDiskWrite"
+SSTAT_FIELDS = (
+    "JobID,MaxRSS,AveCPU,NTasks,MaxDiskRead,MaxDiskWrite,"
+    # TRESUsageInAve carries gres/gpuutil and gres/gpumem, i.e. the very numbers
+    # NYU's low-utilisation policy is enforced on. Requesting one more field on the
+    # call we already make costs nothing.
+    "TRESUsageInAve"
+)
 
 #: Values past these bounds are discarded rather than displayed. Torch's `extern`
 #: step reports nonsense for some array tasks -- an `AveCPU` of
@@ -676,6 +682,13 @@ def parse_cpu_seconds(value: str | None) -> int | None:
     return days * 86400 + hours * 3600 + minutes * 60 + seconds
 
 
+def _to_int(raw: object) -> int | None:
+    try:
+        return int(float(str(raw)))  # type: ignore[arg-type]
+    except (TypeError, ValueError):
+        return None
+
+
 def _plausible(value: int | None, limit: int, *, keep_zero: bool = True) -> int | None:
     """Drop an impossible measurement rather than showing it as fact."""
     if value is None:
@@ -721,6 +734,8 @@ def aggregate_usage(rows: list[list[str]]) -> list[dict]:
                 "tasks": None,
                 "disk_read_bytes": None,
                 "disk_write_bytes": None,
+                "gpu_util": None,
+                "gpu_memory_mb": None,
                 "steps": 0,
             },
         )
@@ -745,6 +760,24 @@ def aggregate_usage(rows: list[list[str]]) -> list[dict]:
             size = _plausible(parse_size_kb(row[index]), MAX_PLAUSIBLE_RSS_KB * 1024)
             if size is not None:
                 record[key] = max(record[key] or 0, size * 1024)
+
+        # TRESUsageInAve is a `key=value,...` TRES string. gpuutil is POOLED over the
+        # step's GPUs rather than per-GPU -- the client divides by the GPU count, and
+        # flags the result when dividing yields an impossible figure. Keeping the raw
+        # value here means the display can change without touching the probe.
+        tres = split_tres(row[6]) if len(row) > 6 else {}
+        gpu_util = _to_int(tres.get("gres/gpuutil"))
+        if gpu_util is not None:
+            # A deliberately loose ceiling: 100 per GPU, with room for a whole node's
+            # worth. Its only job is to drop the garbage the controller sometimes
+            # reports, and anything that survives is checked properly by the client.
+            gpu_util = _plausible(gpu_util, 100 * 1024)
+        if gpu_util is not None:
+            record["gpu_util"] = max(record["gpu_util"] or 0, gpu_util)
+
+        gpu_mem_kb = _plausible(parse_size_kb(tres.get("gres/gpumem")), MAX_PLAUSIBLE_RSS_KB)
+        if gpu_mem_kb is not None:
+            record["gpu_memory_mb"] = max(record["gpu_memory_mb"] or 0, gpu_mem_kb // 1024)
 
     return [totals[job_id] for job_id in sorted(totals)]
 
