@@ -60,16 +60,13 @@ is a single standard-library script piped over stdin, so the login node only nee
 `python3` and the usual SLURM commands on its `PATH`.
 
 ```bash
-# From PyPI, as a tool (recommended: keeps the TUI in its own environment)
-pipx install 'lampter[tui]'
-
-# ...or into the current environment
-pip install 'lampter[tui]'
-
-# ...or from a checkout
 git clone https://github.com/JosiahWayne/lampter && cd lampter
-pip install -e '.[tui]'
+pipx install --editable '.[tui]'      # or: pip install -e '.[tui]'
 ```
+
+Not on PyPI yet. Both distributions are built and their test suites run in CI on every
+push, so `pip install 'lampter[tui]'` is the intended path and will work as soon as a
+release is uploaded — until then, install from the checkout as above.
 
 `rich` is the only hard dependency, because the one-shot `status` view uses it.
 `textual` is needed only for the interactive dashboard, so a headless machine can
