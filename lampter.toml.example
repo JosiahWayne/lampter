@@ -41,10 +41,12 @@ batch_mode = true
 #
 # > Do not turn these down without a reason. They are a budget against a machine
 # > everybody shares, not a freshness dial. The defaults cost ~156 SLURM commands an
-# > hour; `refresh_interval = 2` costs ~1,800, for a view of the queue that a
-# > 60-second poll already answers. Nothing below 2 seconds can even finish a round
-# > trip on a WAN link, so it only produces failing attempts. `lampter doctor` prints
-# > the cost of whatever you configure, and warns above ~600 commands an hour.
+# > hour; `refresh_interval = 2` costs ~1,900, for a view of the queue that a
+# > 60-second poll already answers. And an interval shorter than a round trip does
+# > not make anything faster -- a refresh already in flight is never doubled up, so
+# > the rate is capped by the network -- it just means poll continuously, which is a
+# > strange thing to do to somebody else's login node. `lampter doctor` prints the
+# > cost of whatever you configure, and warns above ~600 commands an hour.
 #
 # > And quit the dashboard when you are done. It polls for as long as it is on
 # > screen, and a window left open behind a dropped VPN keeps making failing SSH

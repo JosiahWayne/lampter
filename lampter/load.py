@@ -115,8 +115,9 @@ def load_warnings(intervals: Mapping[str, float]) -> list[str]:
         interval = intervals.get(section, 0.0)
         if 0 < interval < MIN_INTERVAL:
             warnings.append(
-                f"the {section} interval is {interval:g}s; below {MIN_INTERVAL:g}s a "
-                "round trip cannot finish, so this only produces failing attempts"
+                f"the {section} interval is {interval:g}s, below the {MIN_INTERVAL:g}s "
+                "floor; a round trip takes about that long, so this does not poll more "
+                "often, it polls as fast as the network allows"
             )
 
     per_hour = commands_per_hour(intervals)

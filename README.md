@@ -287,16 +287,20 @@ The dashboard will not do that quietly:
 * **Then it stops.** After ten consecutive failures it turns auto-refresh off and says
   so on the notice line, because at that point the retries are no longer plausibly going
   to succeed. Press `r` to try again, `a` to resume, or `q` to quit. A connection that
-  comes back on its own restores auto-refresh by itself.
+  comes back on its own restores auto-refresh, if the pause is what turned it off.
 * The failure count and the next attempt are on screen the whole time, so a monitor that
   has quietly died looks different from one that is working.
 
 **Do not turn the intervals down.** They are a budget against a shared controller, not a
 freshness dial to be maxed out. The defaults cost ~156 SLURM commands an hour, which is
 roughly 11× lighter than a `watch -n 2 squeue` habit; setting `refresh_interval = 2`
-costs ~1,800 an hour for a view of the queue that a 60-second poll already answers. A
-refresh below 2 seconds cannot even complete a round trip on a WAN link, so it only
-produces failing attempts.
+costs ~1,900 an hour for a view of the queue that a 60-second poll already answers.
+
+An interval shorter than a round trip does not make anything faster — a refresh already
+in flight is never doubled up, so the poll rate is capped by the network, not by the
+number in the file. It just means *poll continuously*, which is a strange thing to do to
+somebody else's login node, and it is why the keyboard is clamped to 2 seconds and why a
+value below that is reported rather than obeyed.
 
 You are told rather than trusted:
 

@@ -106,13 +106,13 @@ def test_a_busy_cadence_is_reported_with_its_own_number():
 
 
 def test_an_impossible_interval_is_reported_separately():
-    """Below the floor a round trip cannot finish, which is a different mistake."""
+    """Below the floor the poll rate is the network's, not the interval's."""
     intervals = intervals_of(Config())
     intervals["jobs"] = 0.5
 
     warnings = load_warnings(intervals)
 
-    assert any("cannot finish" in warning for warning in warnings)
+    assert any("below the" in warning and "floor" in warning for warning in warnings)
 
 
 def test_the_threshold_leaves_room_for_a_deliberate_choice():
@@ -130,7 +130,7 @@ def test_the_config_loader_actually_says_something(tmp_path):
 
     config = load_config(path=config_file, env={})
 
-    assert any("cannot finish" in warning for warning in config.warnings)
+    assert any("floor" in warning for warning in config.warnings)
     assert any("commands an hour" in warning for warning in config.warnings)
 
 
@@ -138,14 +138,14 @@ def test_the_floor_is_the_floor():
     """Exactly at the floor there is nothing to complain about on those grounds.
 
     A rate warning may still fire -- two seconds between `sinfo` calls is genuinely a
-    lot -- but "a round trip cannot finish" no longer applies, and the two complaints
-    mean different things.
+    lot -- but "below the floor" no longer applies, and the two complaints mean
+    different things.
     """
     at_floor = intervals_of(Config(partition_interval=MIN_INTERVAL))
-    assert not any("cannot finish" in warning for warning in load_warnings(at_floor))
+    assert not any("floor" in warning for warning in load_warnings(at_floor))
 
     just_under = intervals_of(Config(partition_interval=MIN_INTERVAL - 0.1))
-    assert any("cannot finish" in warning for warning in load_warnings(just_under))
+    assert any("floor" in warning for warning in load_warnings(just_under))
 
 
 # ------------------------------------------------------------------ the retry policy
