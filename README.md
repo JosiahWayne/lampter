@@ -1,5 +1,9 @@
 # lampter
 
+[![CI](https://github.com/JosiahWayne/lampter/actions/workflows/ci.yml/badge.svg)](https://github.com/JosiahWayne/lampter/actions/workflows/ci.yml)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11%2B-blue)](https://github.com/JosiahWayne/lampter/blob/main/pyproject.toml)
+[![MIT licence](https://img.shields.io/badge/licence-MIT-blue)](https://github.com/JosiahWayne/lampter/blob/main/LICENSE)
+
 A terminal dashboard for watching **your** SLURM jobs on **NYU's Torch cluster**, running
 locally on your own machine and pulling data over SSH.
 

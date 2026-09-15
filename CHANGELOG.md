@@ -79,6 +79,13 @@ than estimated.
 
 ### Robustness
 
+* Per-account and per-QOS GPU counts were undercounted on multi-node jobs. The collector
+  reads `squeue -o %b`, which prints TRES **per node** — SchedMD documents it only as the
+  long form `-O tres-per-node`, and marks the short `%b` as a vestigial option that could
+  be removed — and used it as the job's total. A job with `--nodes=2 --gres=gpu:1` holds
+  two GPUs and was counted as one, which also inflated the headroom derived from it. It
+  went unnoticed because every GPU job on Torch is a single node, where the two agree; the
+  test that covered it asserted the per-node figure as the expected total.
 * A schema difference in `sacct --json` used to abort the entire probe. Slurm's JSON
   output is versioned and the same field changes shape between releases (`exit_code` is
   an object on 23.11+, a bare integer before it), so a scalar field raised

@@ -1195,7 +1195,15 @@ def collect_current_usage(
             node_count = int(nodes)
         except ValueError:
             continue
-        gpus = count_gpus(tres)
+        # `%b` is TRES **per node**, so it has to be scaled by the node count: a two-node
+        # job with `--gres=gpu:1` reports `gres/gpu:1` here and holds two GPUs. Getting
+        # this wrong undercounts every per-account and per-QOS GPU figure, and therefore
+        # the headroom derived from them, on any multi-node GPU job.
+        #
+        # The field is only documented in the long form (`-O tres-per-node`); the short
+        # `%b` is marked internally as a "vestigial option" that "could be removed", per
+        # SchedMD ticket 11239. `%C` and `%D` are job totals, so only the TRES needs it.
+        gpus = count_gpus(tres) * max(1, node_count)
 
         if account:
             add(by_account, account, gpus, cpu_count, node_count, who)

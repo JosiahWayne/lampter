@@ -198,7 +198,12 @@ def test_collect_sshare(monkeypatch, tmp_path):
 
 
 def test_collect_current_usage_buckets_by_account_qos_and_me(monkeypatch, tmp_path):
-    """`%a` is the account; getting that wrong silently yields job numbers."""
+    """`%a` is the account; getting that wrong silently yields job numbers.
+
+    `%b` is TRES **per node**, so the two-node job below holds eight GPUs, not four.
+    The assertion here used to say four, which is how a per-node figure passed for a
+    job total for as long as every GPU job on the cluster was a single node.
+    """
     only_tool(
         monkeypatch,
         tmp_path,
@@ -214,15 +219,40 @@ def test_collect_current_usage_buckets_by_account_qos_and_me(monkeypatch, tmp_pa
     assert by_account["acct_one"]["gpus"] == 3
     assert by_account["acct_one"]["jobs"] == 2
     assert by_account["acct_one"]["users"] == 2
-    assert by_account["acct_two"]["gpus"] == 4
+    # 4 per node x 2 nodes. `%C` (32) is already the job total, so it is not scaled.
+    assert by_account["acct_two"]["gpus"] == 8
+    assert by_account["acct_two"]["cpus"] == 40
 
     assert by_qos["gpu48"]["gpus"] == 3
     assert by_qos["cpu48"]["gpus"] == 0  # N/A is a real answer, not an error
 
     # Only alice's own usage, per QOS.
     assert mine["gpu48"]["gpus"] == 2
-    assert mine["gpu168"]["gpus"] == 4
+    assert mine["gpu168"]["gpus"] == 8
     assert "cpu48" not in mine
+
+
+def test_collect_current_usage_scales_per_node_tres(monkeypatch, tmp_path):
+    """One GPU per node on four nodes is four GPUs, not one.
+
+    `squeue -o %b` prints TRES_PER_NODE -- SchedMD documents it only as the long form
+    `-O tres-per-node`, and marks the short `%b` as a vestigial option that could be
+    removed. Reading it as the job total undercounts the per-account and per-QOS
+    figures, and therefore the headroom derived from them, by the node count.
+    """
+    only_tool(
+        monkeypatch,
+        tmp_path,
+        squeue=(
+            "alice|acct_one|gpu168|gres/gpu:1|16|4\n"
+            "alice|acct_one|gpu168|gres/gpu:8|128|1\n"
+        ),
+    )
+    by_account, _by_qos, mine = rp.collect_current_usage("alice", [], {})
+
+    assert by_account["acct_one"]["gpus"] == 4 + 8
+    assert by_account["acct_one"]["nodes"] == 5
+    assert mine["gpu168"]["gpus"] == 4 + 8
 
 
 def test_collect_account_window_sums_gpu_and_cpu_hours(monkeypatch, tmp_path):
