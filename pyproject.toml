@@ -37,13 +37,22 @@ dependencies = [
 # Only the interactive dashboard needs Textual; `status` and `doctor` do not, so a
 # headless box can install the package without pulling in a TUI framework.
 tui = ["textual>=0.80,<9"]
+# `dev` pulls in `tui` on purpose: without Textual, `pytest.importorskip` silently skips
+# the whole dashboard suite, so a contributor installing only `[dev]` would see a green
+# run that never exercised the main deliverable.
 dev = [
     "pytest>=8.0",
     "ruff>=0.6",
+    "textual>=0.80,<9",
 ]
 
 [project.scripts]
 lampter = "lampter.cli:main"
+
+[tool.setuptools.package-data]
+# The PEP 561 marker, so the `Typing :: Typed` classifier above is true rather than
+# aspirational: without it type checkers ignore every inline annotation.
+lampter = ["py.typed"]
 
 [project.urls]
 Homepage = "https://github.com/JosiahWayne/lampter"

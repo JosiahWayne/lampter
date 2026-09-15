@@ -1,0 +1,24 @@
+# What the source distribution must carry beyond the package itself.
+#
+# setuptools' defaults are not enough: they sweep in `tests/test*.py` but not the shared
+# `conftest.py`/`fixture_data.py`, nor the `tests/fixtures/` payload. Without those the
+# sdist cannot run its own suite -- and, because `conftest.py` is also what redirects the
+# history database to a temporary file, a test run from the sdist would touch the
+# developer's real `~/.local/share/lampter/history.db`.
+#
+# `lampter.toml.example` is here because the README tells the reader to copy it. The
+# whole point of an unannotated-looking config file is that it is the annotated one.
+include LICENSE
+include README.md
+include CHANGELOG.md
+include lampter.toml.example
+
+recursive-include tests *.py *.json
+recursive-include .github *.yml
+
+# Nothing generated, and nothing from a local run.
+global-exclude *.py[cod] .DS_Store
+prune dist
+prune build
+prune .venv
+prune .uv-cache

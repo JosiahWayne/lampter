@@ -56,6 +56,21 @@ jobs:
           pip install dist/*.whl
           lampter --version
           lampter --help > /dev/null
+      # The wheel test above is why this went unnoticed once: setuptools' default
+      # manifest sweeps in `tests/test*.py` but not `conftest.py`, `fixture_data.py` or
+      # `tests/fixtures/`, so a published sdist could not run its own suite. Build from
+      # the sdist and run it there, which is the only place the omission shows.
+      - name: The source distribution must be able to test itself
+        run: |
+          mkdir -p /tmp/sdist
+          tar xzf dist/*.tar.gz -C /tmp/sdist
+          # `[dev]` must not reach the shell as a glob, hence the variable.
+          sdist=$(ls -d /tmp/sdist/*)
+          python -m venv /tmp/sdist-venv
+          /tmp/sdist-venv/bin/pip install -q --upgrade pip
+          /tmp/sdist-venv/bin/pip install -q "${sdist}[dev]"
+          cd "$sdist"
+          /tmp/sdist-venv/bin/python -m pytest -q
       - uses: actions/upload-artifact@v4
         with:
           name: dist
